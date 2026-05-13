@@ -37,7 +37,8 @@
 
 // ── Display ──────────────────────────────────────────────────────────────────
 // PIN_TFT_CS / _DC / _RST / _LITE defined in the CLUE BSP variant.h
-Adafruit_ST7789 tft(PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST);
+// CLUE display is on SPI1, not the default SPI bus
+Adafruit_ST7789 tft(&SPI1, PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST);
 
 // ── Sensors ──────────────────────────────────────────────────────────────────
 Adafruit_LSM6DS33 imu;
