@@ -16,9 +16,21 @@
  *       that ships with the Adafruit nRF52 BSP.
  *
  * Usage:
+ *   Power-on  — runs a 3-second bias calibration. DO NOT MOVE the device,
+ *               and place it FLAT (Z axis up) so accel reads (0,0,+9.81 m/s²).
  *   Button A  — start / stop a measurement session
- *   Button B  — manually log a corner waypoint
+ *   Button B  — short press: log a corner waypoint
+ *               long  press (>1.5 s in IDLE): magnetometer hard-iron calibration
+ *               (slowly rotate CLUE through every orientation for 25 s)
  *   Auto-log  — a waypoint is also logged whenever the device goes still
+ *
+ * Fine-tuning applied:
+ *   * Gyro + accel bias calibration on startup
+ *   * Magnetometer hard-iron calibration via long-press
+ *   * Tighter accel range (±2 g) + gyro range (±500 dps) for better resolution
+ *   * 208 Hz IMU sampling, 155 Hz mag w/ ultra-high performance
+ *   * 6-DOF fallback (no mag) until mag-cal is performed
+ *   * Soft velocity damping between ZUPT events
  *
  * BLE service UUID : 19B10000-E8F2-537E-4F6C-D104768A1214
  *   Waypoint char  : 19B10001  (notify, 12 bytes = 3x float32 x/y/z metres)
@@ -56,9 +68,12 @@ BLECharacteristic cmdChar("19B10002-E8F2-537E-4F6C-D104768A1214");  // write,  1
 // ── Tuning constants ─────────────────────────────────────────────────────────
 static const float RATE_HZ       = 100.0f;
 static const float DT            = 1.0f / RATE_HZ;
-static const float ZUPT_ACCEL_THR = 0.12f;  // m/s² deviation from g
-static const float ZUPT_GYRO_THR  = 0.04f;  // rad/s total magnitude
+// Thresholds tightened after bias calibration is applied
+static const float ZUPT_ACCEL_THR = 0.07f;  // m/s² deviation from g
+static const float ZUPT_GYRO_THR  = 0.025f; // rad/s total magnitude
 static const int   ZUPT_HOLD      = 8;       // consecutive 100-Hz ticks (~80 ms)
+// Soft velocity damping per tick when slow but not fully stationary
+static const float VEL_DAMP       = 0.985f;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 enum MeasState : uint8_t { IDLE, MEASURING };
@@ -81,6 +96,12 @@ volatile int8_t pendingCmd = -1;
 // ── Timing ────────────────────────────────────────────────────────────────────
 uint32_t nextLoopUs = 0;
 uint8_t  dispTick   = 0;
+
+// ── Sensor biases (computed at startup / via mag-cal long-press) ─────────────
+float gyroBiasX  = 0, gyroBiasY  = 0, gyroBiasZ  = 0;
+float accelBiasX = 0, accelBiasY = 0, accelBiasZ = 0;
+float magOffX    = 0, magOffY    = 0, magOffZ    = 0;
+bool  magCalibrated = false;
 
 // ── Math helper ──────────────────────────────────────────────────────────────
 // Rotate body-frame vector by quaternion into world frame.
@@ -190,6 +211,16 @@ void refreshDisplay(bool force = false) {
         tft.setTextColor(still ? ST77XX_GREEN : 0x7BEF);
         tft.setCursor(4, 174);
         tft.print(still ? "STILL - auto-log" : "moving...");
+    } else if (force) {
+        // IDLE hints + mag-cal status
+        tft.fillRect(0, 170, 240, 60, ST77XX_BLACK);
+        tft.setTextSize(1);
+        tft.setTextColor(0x7BEF);
+        tft.setCursor(4, 178);
+        tft.print("[A] start   [B] waypoint");
+        tft.setCursor(4, 196);
+        tft.setTextColor(magCalibrated ? ST77XX_GREEN : 0xFC00);
+        tft.print(magCalibrated ? "Mag: calibrated" : "Mag: hold B 1.5s in IDLE");
     }
 }
 
@@ -203,6 +234,131 @@ void resetMeasurement() {
     wasStationary = false;
     refAlt        = baro.readAltitude(1013.25f);
     ahrs.begin(RATE_HZ);
+}
+
+// ── Gyro + accelerometer bias calibration ────────────────────────────────────
+// Device MUST be sitting flat & still during this routine.
+// Computes the average reading of each axis and treats it as a bias.
+// Accelerometer assumes +Z is up, so 9.81 is subtracted from the Z average.
+void calibrateBiases() {
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setTextSize(2);
+    tft.setTextColor(ST77XX_YELLOW);
+    tft.setCursor(20, 50);
+    tft.print("CALIBRATING");
+    tft.setCursor(40, 80);
+    tft.print("HOLD STILL");
+    tft.setTextSize(1);
+    tft.setTextColor(ST77XX_WHITE);
+    tft.setCursor(20, 120);
+    tft.print("Place flat, do not move");
+    delay(800);  // settling
+
+    const int N = 500;
+    double sgX = 0, sgY = 0, sgZ = 0;
+    double saX = 0, saY = 0, saZ = 0;
+    sensors_event_t aEv, gEv, tEv;
+    int barW = 0;
+
+    for (int i = 0; i < N; i++) {
+        imu.getEvent(&aEv, &gEv, &tEv);
+        sgX += gEv.gyro.x;
+        sgY += gEv.gyro.y;
+        sgZ += gEv.gyro.z;
+        saX += aEv.acceleration.x;
+        saY += aEv.acceleration.y;
+        saZ += aEv.acceleration.z;
+        int newBar = (i + 1) * 200 / N;
+        if (newBar > barW) {
+            tft.fillRect(20, 160, newBar, 12, ST77XX_GREEN);
+            barW = newBar;
+        }
+        delay(5);  // ~200 Hz
+    }
+
+    gyroBiasX  = sgX / N;
+    gyroBiasY  = sgY / N;
+    gyroBiasZ  = sgZ / N;
+    accelBiasX = saX / N;
+    accelBiasY = saY / N;
+    accelBiasZ = (saZ / N) - 9.81f;
+
+    Serial.print("Gyro bias (rad/s):  ");
+    Serial.print(gyroBiasX, 4); Serial.print(" ");
+    Serial.print(gyroBiasY, 4); Serial.print(" ");
+    Serial.println(gyroBiasZ, 4);
+    Serial.print("Accel bias (m/s2): ");
+    Serial.print(accelBiasX, 3); Serial.print(" ");
+    Serial.print(accelBiasY, 3); Serial.print(" ");
+    Serial.println(accelBiasZ, 3);
+
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setTextSize(2);
+    tft.setTextColor(ST77XX_GREEN);
+    tft.setCursor(40, 100);
+    tft.print("CAL DONE");
+    delay(700);
+}
+
+// ── Magnetometer hard-iron calibration (long-press B in IDLE) ────────────────
+// User rotates the device through all orientations for ~25 s; we capture
+// min/max of each axis and compute the center as the hard-iron offset.
+void calibrateMagnetometer() {
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setTextSize(2);
+    tft.setTextColor(ST77XX_YELLOW);
+    tft.setCursor(50, 20);
+    tft.print("MAG CAL");
+    tft.setTextSize(1);
+    tft.setTextColor(ST77XX_WHITE);
+    tft.setCursor(10, 60);
+    tft.print("Slowly rotate CLUE");
+    tft.setCursor(10, 75);
+    tft.print("through every");
+    tft.setCursor(10, 90);
+    tft.print("orientation (figure-8");
+    tft.setCursor(10, 105);
+    tft.print("in all 3 axes).");
+
+    float mxMin =  1e6, mxMax = -1e6;
+    float myMin =  1e6, myMax = -1e6;
+    float mzMin =  1e6, mzMax = -1e6;
+    const uint32_t DURATION = 25000;
+    uint32_t start = millis();
+    sensors_event_t mEv;
+    int barW = 0;
+
+    while (millis() - start < DURATION) {
+        mag.getEvent(&mEv);
+        float mx = mEv.magnetic.x, my = mEv.magnetic.y, mz = mEv.magnetic.z;
+        if (mx < mxMin) mxMin = mx;  if (mx > mxMax) mxMax = mx;
+        if (my < myMin) myMin = my;  if (my > myMax) myMax = my;
+        if (mz < mzMin) mzMin = mz;  if (mz > mzMax) mzMax = mz;
+
+        int newBar = (millis() - start) * 220 / DURATION;
+        if (newBar > barW) {
+            tft.fillRect(10, 180, newBar, 12, ST77XX_GREEN);
+            barW = newBar;
+        }
+        delay(15);
+    }
+
+    magOffX = (mxMin + mxMax) * 0.5f;
+    magOffY = (myMin + myMax) * 0.5f;
+    magOffZ = (mzMin + mzMax) * 0.5f;
+    magCalibrated = true;
+
+    Serial.print("Mag offsets (uT): ");
+    Serial.print(magOffX, 2); Serial.print(" ");
+    Serial.print(magOffY, 2); Serial.print(" ");
+    Serial.println(magOffZ, 2);
+
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setTextSize(2);
+    tft.setTextColor(ST77XX_GREEN);
+    tft.setCursor(20, 100);
+    tft.print("MAG CAL OK");
+    delay(800);
 }
 
 // ── setup() ──────────────────────────────────────────────────────────────────
@@ -238,19 +394,24 @@ void setup() {
     bool baroOk = baro.begin(0x77, baroChipId);
     Serial.println(baroOk ? "Baro OK" : "Baro fail (elevation disabled)");
 
-    imu.setAccelRange(LSM6DS_ACCEL_RANGE_4_G);
-    imu.setAccelDataRate(LSM6DS_RATE_104_HZ);
-    imu.setGyroRange(LSM6DS_GYRO_RANGE_2000_DPS);
-    imu.setGyroDataRate(LSM6DS_RATE_104_HZ);
+    // Tighter range on accel = better resolution for small movements.
+    // Faster ODR + hardware filter = lower aliasing.
+    imu.setAccelRange(LSM6DS_ACCEL_RANGE_2_G);
+    imu.setAccelDataRate(LSM6DS_RATE_208_HZ);
+    imu.setGyroRange(LSM6DS_GYRO_RANGE_500_DPS);   // 500 dps is more than enough for handheld
+    imu.setGyroDataRate(LSM6DS_RATE_208_HZ);
 
-    mag.setDataRate(LIS3MDL_DATARATE_80_HZ);
+    mag.setDataRate(LIS3MDL_DATARATE_155_HZ);
     mag.setRange(LIS3MDL_RANGE_4_GAUSS);
-    mag.setPerformanceMode(LIS3MDL_HIGHMODE);
+    mag.setPerformanceMode(LIS3MDL_ULTRAHIGHMODE);
     mag.setOperationMode(LIS3MDL_CONTINUOUSMODE);
     Serial.println("Sensors configured");
 
     pinMode(PIN_BUTTON1, INPUT_PULLUP);
     pinMode(PIN_BUTTON2, INPUT_PULLUP);
+
+    // Bias calibration — device must be flat and still for ~3 s
+    calibrateBiases();
 
     Serial.println("Starting BLE...");
     Bluefruit.begin();
@@ -312,12 +473,28 @@ void loop() {
     }
     prevA = curA;
 
-    // Button B — manual waypoint
-    static bool prevB = HIGH;
+    // Button B — short press = manual waypoint, long press (>1.5s) = mag cal
+    static bool     prevB           = HIGH;
+    static uint32_t bDownMs         = 0;
+    static bool     bLongHandled    = false;
     bool curB = digitalRead(PIN_BUTTON2);
-    if (prevB && !curB && measState == MEASURING) {
-        logWaypoint();
-        refreshDisplay();
+    if (prevB && !curB) {                // press edge
+        bDownMs = millis();
+        bLongHandled = false;
+    }
+    if (!curB && !bLongHandled && (millis() - bDownMs > 1500)) {
+        // Long-press fired while still held — only in IDLE for safety
+        if (measState == IDLE) {
+            calibrateMagnetometer();
+            refreshDisplay(true);
+        }
+        bLongHandled = true;
+    }
+    if (!prevB && curB) {                // release edge
+        if (!bLongHandled && measState == MEASURING) {
+            logWaypoint();
+            refreshDisplay();
+        }
     }
     prevB = curB;
 
@@ -325,25 +502,30 @@ void loop() {
     if ((int32_t)(micros() - nextLoopUs) < 0) return;
     nextLoopUs += (uint32_t)(DT * 1.0e6f);
 
-    // Read IMU
+    // Read IMU + apply calibrated biases
     sensors_event_t aEv, gEv, tEv;
     imu.getEvent(&aEv, &gEv, &tEv);
-    float ax = aEv.acceleration.x;
-    float ay = aEv.acceleration.y;
-    float az = aEv.acceleration.z;
-    float gx = gEv.gyro.x;
-    float gy = gEv.gyro.y;
-    float gz = gEv.gyro.z;
+    float ax = aEv.acceleration.x - accelBiasX;
+    float ay = aEv.acceleration.y - accelBiasY;
+    float az = aEv.acceleration.z - accelBiasZ;
+    float gx = gEv.gyro.x - gyroBiasX;
+    float gy = gEv.gyro.y - gyroBiasY;
+    float gz = gEv.gyro.z - gyroBiasZ;
 
-    // Read magnetometer
+    // Read magnetometer + apply hard-iron offsets
     sensors_event_t mEv;
     mag.getEvent(&mEv);
-    float mx = mEv.magnetic.x;
-    float my = mEv.magnetic.y;
-    float mz = mEv.magnetic.z;
+    float mx = mEv.magnetic.x - magOffX;
+    float my = mEv.magnetic.y - magOffY;
+    float mz = mEv.magnetic.z - magOffZ;
 
-    // Madgwick update — runs in IDLE too so filter converges before measuring
-    ahrs.update(gx, gy, gz, ax, ay, az, mx, my, mz);
+    // Madgwick update — feed mag only if calibrated, else fall back to 6-DOF
+    // (uncalibrated mag actively HURTS yaw because of hard-iron bias).
+    if (magCalibrated) {
+        ahrs.update(gx, gy, gz, ax, ay, az, mx, my, mz);
+    } else {
+        ahrs.updateIMU(gx, gy, gz, ax, ay, az);
+    }
 
     // Display refresh ~5 Hz
     if (++dispTick >= 20) {
@@ -381,6 +563,13 @@ void loop() {
         vx += wax * DT;
         vy += way * DT;
         vz += waz * DT;
+        // Partial damping when we're trending toward still — kills residual
+        // drift between explicit ZUPT events without affecting real motion.
+        if (zuptTicks >= ZUPT_HOLD / 2) {
+            vx *= VEL_DAMP;
+            vy *= VEL_DAMP;
+            vz *= VEL_DAMP;
+        }
     }
     wasStationary = stationary;
 
