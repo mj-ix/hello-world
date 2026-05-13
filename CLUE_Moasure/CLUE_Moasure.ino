@@ -220,9 +220,13 @@ void setup() {
     tft.println("Starting up...");
 
     Wire.begin();
-    if (!imu.begin_I2C()) { tft.println("IMU fail!");  while (1) delay(10); }
-    if (!mag.begin_I2C()) { tft.println("Mag fail!");  while (1) delay(10); }
-    if (!baro.begin())    { tft.println("Baro fail!"); while (1) delay(10); }
+    Serial.println("Wire OK");
+    if (!imu.begin_I2C()) { Serial.println("IMU fail");  tft.println("IMU fail!");  while (1) delay(10); }
+    Serial.println("IMU OK");
+    if (!mag.begin_I2C()) { Serial.println("Mag fail");  tft.println("Mag fail!");  while (1) delay(10); }
+    Serial.println("Mag OK");
+    if (!baro.begin(0x76)) { Serial.println("Baro fail"); tft.println("Baro fail!"); while (1) delay(10); }
+    Serial.println("Baro OK");
 
     imu.setAccelRange(LSM6DS_ACCEL_RANGE_4_G);
     imu.setAccelDataRate(LSM6DS_RATE_104_HZ);
