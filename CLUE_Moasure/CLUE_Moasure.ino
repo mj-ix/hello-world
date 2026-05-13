@@ -211,7 +211,7 @@ void setup() {
     pinMode(PIN_TFT_LITE, OUTPUT);
     digitalWrite(PIN_TFT_LITE, HIGH);
 
-    tft.init(240, 240);
+    tft.init(240, 240, SPI_MODE2);
     tft.setRotation(1);
     tft.fillScreen(ST77XX_BLACK);
     tft.setTextColor(ST77XX_WHITE);
