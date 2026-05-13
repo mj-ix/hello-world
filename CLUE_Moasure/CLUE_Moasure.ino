@@ -11,7 +11,9 @@
  *   Adafruit GFX Library     (display graphics primitives)
  *   Adafruit ST7789          (display driver)
  *   Adafruit AHRS            (Madgwick sensor-fusion filter)
- *   ArduinoBLE               (Bluetooth LE)
+ *
+ * NOTE: Do NOT install ArduinoBLE. BLE is handled by the bluefruit.h library
+ *       that ships with the Adafruit nRF52 BSP.
  *
  * Usage:
  *   Button A  — start / stop a measurement session
@@ -19,7 +21,7 @@
  *   Auto-log  — a waypoint is also logged whenever the device goes still
  *
  * BLE service UUID : 19B10000-E8F2-537E-4F6C-D104768A1214
- *   Waypoint char  : 19B10001  (notify, 12 bytes = 3× float32 x/y/z metres)
+ *   Waypoint char  : 19B10001  (notify, 12 bytes = 3x float32 x/y/z metres)
  *   Command char   : 19B10002  (write 1 byte: 0=idle 1=start 2=reset)
  */
 
@@ -31,10 +33,10 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 #include <Adafruit_AHRS.h>
-#include <ArduinoBLE.h>
+#include <bluefruit.h>   // built into the Adafruit nRF52 BSP — do not install separately
 
 // ── Display ──────────────────────────────────────────────────────────────────
-// PIN_TFT_CS / _DC / _RST / _LITE are all defined in the CLUE BSP variant.h
+// PIN_TFT_CS / _DC / _RST / _LITE defined in the CLUE BSP variant.h
 Adafruit_ST7789 tft(PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST);
 
 // ── Sensors ──────────────────────────────────────────────────────────────────
@@ -42,27 +44,20 @@ Adafruit_LSM6DS33 imu;
 Adafruit_LIS3MDL  mag;
 Adafruit_BMP280   baro;
 
-// 9-DOF Madgwick filter (use Adafruit_Mahony if you prefer)
+// 9-DOF Madgwick filter
 Adafruit_Madgwick ahrs;
 
 // ── BLE ──────────────────────────────────────────────────────────────────────
 BLEService        measSvc("19B10000-E8F2-537E-4F6C-D104768A1214");
-// 3× little-endian float32 (x, y, z) in metres, world frame (ENU: East/North/Up)
-BLECharacteristic wpChar("19B10001-E8F2-537E-4F6C-D104768A1214",
-                          BLERead | BLENotify, 12);
-BLEByteCharacteristic cmdChar("19B10002-E8F2-537E-4F6C-D104768A1214",
-                               BLERead | BLEWrite);
+BLECharacteristic wpChar("19B10001-E8F2-537E-4F6C-D104768A1214");   // notify, 12 bytes
+BLECharacteristic cmdChar("19B10002-E8F2-537E-4F6C-D104768A1214");  // write,  1 byte
 
 // ── Tuning constants ─────────────────────────────────────────────────────────
-static const float RATE_HZ    = 100.0f;
-static const float DT         = 1.0f / RATE_HZ;
-
-// ZUPT — device is considered stationary when:
-//   |accel magnitude − g| < ZUPT_ACCEL_THR  AND  |gyro| < ZUPT_GYRO_THR
-//   ... for ZUPT_HOLD consecutive 100 Hz ticks
-static const float ZUPT_ACCEL_THR = 0.12f;  // m/s²
-static const float ZUPT_GYRO_THR  = 0.04f;  // rad/s
-static const int   ZUPT_HOLD      = 8;       // ticks (~80 ms)
+static const float RATE_HZ       = 100.0f;
+static const float DT            = 1.0f / RATE_HZ;
+static const float ZUPT_ACCEL_THR = 0.12f;  // m/s² deviation from g
+static const float ZUPT_GYRO_THR  = 0.04f;  // rad/s total magnitude
+static const int   ZUPT_HOLD      = 8;       // consecutive 100-Hz ticks (~80 ms)
 
 // ── State ─────────────────────────────────────────────────────────────────────
 enum MeasState : uint8_t { IDLE, MEASURING };
@@ -72,20 +67,22 @@ MeasState measState = IDLE;
 float vx, vy, vz;
 float px, py, pz;
 float totalDist;
-float refAlt;       // BMP280 altitude at session start
+float refAlt;
 uint16_t nWaypoints;
 
 // ZUPT hysteresis
-int  zuptTicks    = 0;
+int  zuptTicks     = 0;
 bool wasStationary = false;
+
+// Pending command from BLE write callback (processed in loop())
+volatile int8_t pendingCmd = -1;
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 uint32_t nextLoopUs = 0;
-uint8_t  dispTick   = 0;   // counts 100-Hz ticks between display refreshes
+uint8_t  dispTick   = 0;
 
 // ── Math helper ──────────────────────────────────────────────────────────────
-// Rotate a body-frame vector by quaternion → world frame.
-// Uses the rotation-matrix form of q*v*q^-1 (no branching, 15 muls).
+// Rotate body-frame vector by quaternion into world frame.
 inline void quatRotate(float qw, float qx, float qy, float qz,
                        float bx, float by, float bz,
                        float &wx, float &wy, float &wz) {
@@ -100,35 +97,42 @@ inline void quatRotate(float qw, float qx, float qy, float qz,
        + (1.0f - 2.0f*(qx*qx + qy*qy))*bz;
 }
 
-// ── BLE waypoint publish ──────────────────────────────────────────────────────
+// ── BLE callbacks ─────────────────────────────────────────────────────────────
+void onCmdWrite(uint16_t /*conn*/, BLECharacteristic* /*chr*/,
+                uint8_t* data, uint16_t len) {
+    if (len > 0) pendingCmd = (int8_t)data[0];
+}
+
+// ── Waypoint publish ──────────────────────────────────────────────────────────
 void logWaypoint() {
     float payload[3] = { px, py, pz };
-    wpChar.writeValue((uint8_t*)payload, 12);
+    if (Bluefruit.connected()) {
+        wpChar.notify((uint8_t*)payload, 12);
+    }
     nWaypoints++;
 }
 
 // ── Display ───────────────────────────────────────────────────────────────────
-// Only redraws regions whose value has changed to avoid full-screen flicker.
 void refreshDisplay(bool force = false) {
-    static float      lastDist  = -999.0f;
-    static float      lastElev  = -999.0f;
-    static uint16_t   lastPts   = 0xFFFF;
-    static MeasState  lastState = (MeasState)0xFF;
-    static bool       lastBLE   = false;
+    static float     lastDist  = -999.0f;
+    static float     lastElev  = -999.0f;
+    static uint16_t  lastPts   = 0xFFFF;
+    static MeasState lastState = (MeasState)0xFF;
+    static bool      lastBLE   = false;
 
     if (force) {
         lastDist = lastElev = -999.0f;
-        lastPts  = 0xFFFF;
+        lastPts   = 0xFFFF;
         lastState = (MeasState)0xFF;
-        lastBLE  = false;
+        lastBLE   = false;
         tft.fillScreen(ST77XX_BLACK);
     }
 
-    bool bleConn = BLE.connected();
-    float elev   = baro.readAltitude(1013.25f) - refAlt;
+    bool  bleConn = Bluefruit.connected();
+    float elev    = baro.readAltitude(1013.25f) - refAlt;
     char  buf[20];
 
-    // ── State banner ──
+    // State banner + static labels
     if (lastState != measState) {
         tft.fillRect(0, 0, 240, 28, ST77XX_BLACK);
         tft.setTextSize(2);
@@ -140,8 +144,7 @@ void refreshDisplay(bool force = false) {
             tft.setTextColor(ST77XX_YELLOW);
             tft.print("READY  [A]=start");
         }
-        // static labels (only drawn when banner redraws)
-        tft.setTextColor(0x7BEF);  // grey
+        tft.setTextColor(0x7BEF);
         tft.setTextSize(1);
         tft.setCursor(4, 38);  tft.print("Distance");
         tft.setCursor(4, 82);  tft.print("Elevation");
@@ -149,66 +152,55 @@ void refreshDisplay(bool force = false) {
         lastState = measState;
     }
 
-    // ── Distance ──
     if (force || fabsf(totalDist - lastDist) > 0.005f) {
         tft.fillRect(4, 48, 180, 22, ST77XX_BLACK);
         snprintf(buf, sizeof(buf), "%.2f m", totalDist);
-        tft.setTextColor(ST77XX_WHITE);
-        tft.setTextSize(2);
-        tft.setCursor(4, 50);
-        tft.print(buf);
+        tft.setTextColor(ST77XX_WHITE); tft.setTextSize(2);
+        tft.setCursor(4, 50); tft.print(buf);
         lastDist = totalDist;
     }
 
-    // ── Elevation ──
     if (force || fabsf(elev - lastElev) > 0.05f) {
         tft.fillRect(4, 92, 180, 22, ST77XX_BLACK);
         snprintf(buf, sizeof(buf), "%+.1f m", elev);
-        tft.setTextColor(ST77XX_CYAN);
-        tft.setTextSize(2);
-        tft.setCursor(4, 94);
-        tft.print(buf);
+        tft.setTextColor(ST77XX_CYAN); tft.setTextSize(2);
+        tft.setCursor(4, 94); tft.print(buf);
         lastElev = elev;
     }
 
-    // ── Waypoint count ──
     if (force || lastPts != nWaypoints) {
         tft.fillRect(4, 136, 100, 22, ST77XX_BLACK);
         snprintf(buf, sizeof(buf), "%u", nWaypoints);
-        tft.setTextColor(ST77XX_MAGENTA);
-        tft.setTextSize(2);
-        tft.setCursor(4, 138);
-        tft.print(buf);
+        tft.setTextColor(ST77XX_MAGENTA); tft.setTextSize(2);
+        tft.setCursor(4, 138); tft.print(buf);
         lastPts = nWaypoints;
     }
 
-    // ── BLE indicator (filled circle top-right) ──
     if (force || bleConn != lastBLE) {
-        uint16_t col = bleConn ? 0x001F /* blue */ : 0x39E7 /* dark grey */;
+        uint16_t col = bleConn ? 0x001F : 0x39E7;
         tft.fillCircle(228, 14, 10, col);
         lastBLE = bleConn;
     }
 
-    // ── ZUPT / still indicator ──
     if (measState == MEASURING) {
         bool still = (zuptTicks >= ZUPT_HOLD);
-        tft.fillRect(4, 170, 100, 18, ST77XX_BLACK);
+        tft.fillRect(4, 170, 160, 18, ST77XX_BLACK);
         tft.setTextSize(1);
         tft.setTextColor(still ? ST77XX_GREEN : 0x7BEF);
         tft.setCursor(4, 174);
-        tft.print(still ? "STILL — auto-log" : "moving...");
+        tft.print(still ? "STILL - auto-log" : "moving...");
     }
 }
 
-// ── Reset / start a new session ───────────────────────────────────────────────
+// ── Reset session ─────────────────────────────────────────────────────────────
 void resetMeasurement() {
     vx = vy = vz = 0.0f;
     px = py = pz = 0.0f;
-    totalDist  = 0.0f;
-    nWaypoints = 0;
-    zuptTicks  = 0;
+    totalDist     = 0.0f;
+    nWaypoints    = 0;
+    zuptTicks     = 0;
     wasStationary = false;
-    refAlt = baro.readAltitude(1013.25f);
+    refAlt        = baro.readAltitude(1013.25f);
     ahrs.begin(RATE_HZ);
 }
 
@@ -216,11 +208,9 @@ void resetMeasurement() {
 void setup() {
     Serial.begin(115200);
 
-    // ── backlight ──
     pinMode(PIN_TFT_LITE, OUTPUT);
     digitalWrite(PIN_TFT_LITE, HIGH);
 
-    // ── display ──
     tft.init(240, 240);
     tft.setRotation(1);
     tft.fillScreen(ST77XX_BLACK);
@@ -229,52 +219,50 @@ void setup() {
     tft.setCursor(4, 4);
     tft.println("Starting up...");
 
-    // ── sensors (all on shared I2C bus) ──
     Wire.begin();
+    if (!imu.begin_I2C()) { tft.println("IMU fail!");  while (1) delay(10); }
+    if (!mag.begin_I2C()) { tft.println("Mag fail!");  while (1) delay(10); }
+    if (!baro.begin())    { tft.println("Baro fail!"); while (1) delay(10); }
 
-    if (!imu.begin_I2C()) {
-        tft.println("IMU fail!");
-        while (1) delay(10);
-    }
-    if (!mag.begin_I2C()) {
-        tft.println("Mag fail!");
-        while (1) delay(10);
-    }
-    if (!baro.begin()) {
-        tft.println("Baro fail!");
-        while (1) delay(10);
-    }
-
-    // IMU: 104 Hz, ±4 g accel, ±2000 dps gyro
     imu.setAccelRange(LSM6DS_ACCEL_RANGE_4_G);
     imu.setAccelDataRate(LSM6DS_RATE_104_HZ);
     imu.setGyroRange(LSM6DS_GYRO_RANGE_2000_DPS);
     imu.setGyroDataRate(LSM6DS_RATE_104_HZ);
 
-    // Magnetometer: 80 Hz continuous
     mag.setDataRate(LIS3MDL_DATARATE_80_HZ);
     mag.setRange(LIS3MDL_RANGE_4_GAUSS);
     mag.setPerformanceMode(LIS3MDL_HIGHMODE);
     mag.setOperationMode(LIS3MDL_CONTINUOUSMODE);
 
-    // ── buttons ──
     pinMode(PIN_BUTTON1, INPUT_PULLUP);
     pinMode(PIN_BUTTON2, INPUT_PULLUP);
 
-    // ── BLE ──
-    if (!BLE.begin()) {
-        tft.println("BLE fail!");
-        while (1) delay(10);
-    }
-    BLE.setLocalName("Moasure-DIY");
-    BLE.setAdvertisedService(measSvc);
-    measSvc.addCharacteristic(wpChar);
-    measSvc.addCharacteristic(cmdChar);
-    BLE.addService(measSvc);
-    cmdChar.writeValue((uint8_t)0);
-    BLE.advertise();
+    // BLE — using Adafruit Bluefruit (built into the nRF52 BSP)
+    Bluefruit.begin();
+    Bluefruit.setName("Moasure-DIY");
 
-    // ── initial state ──
+    measSvc.begin();
+
+    wpChar.setProperties(CHR_PROPS_READ | CHR_PROPS_NOTIFY);
+    wpChar.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+    wpChar.setFixedLen(12);
+    wpChar.begin();
+
+    cmdChar.setProperties(CHR_PROPS_READ | CHR_PROPS_WRITE);
+    cmdChar.setPermission(SECMODE_OPEN, SECMODE_OPEN);
+    cmdChar.setFixedLen(1);
+    cmdChar.setWriteCallback(onCmdWrite);
+    cmdChar.begin();
+
+    Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+    Bluefruit.Advertising.addTxPower();
+    Bluefruit.Advertising.addService(measSvc);
+    Bluefruit.ScanResponse.addName();
+    Bluefruit.Advertising.restartOnDisconnect(true);
+    Bluefruit.Advertising.setInterval(32, 244);
+    Bluefruit.Advertising.setFastTimeout(30);
+    Bluefruit.Advertising.start(0);
+
     resetMeasurement();
     tft.fillScreen(ST77XX_BLACK);
     refreshDisplay(true);
@@ -284,43 +272,27 @@ void setup() {
 
 // ── loop() ───────────────────────────────────────────────────────────────────
 void loop() {
-    // ── BLE housekeeping ──
-    BLE.poll();
-
-    if (cmdChar.written()) {
-        switch (cmdChar.value()) {
-            case 1:
-                resetMeasurement();
-                measState = MEASURING;
-                refreshDisplay(true);
-                break;
-            case 0:
-                measState = IDLE;
-                refreshDisplay(true);
-                break;
-            case 2:
-                resetMeasurement();
-                measState = IDLE;
-                refreshDisplay(true);
-                break;
+    // Process BLE command written by callback
+    if (pendingCmd >= 0) {
+        switch (pendingCmd) {
+            case 1: resetMeasurement(); measState = MEASURING; refreshDisplay(true); break;
+            case 0: measState = IDLE;                          refreshDisplay(true); break;
+            case 2: resetMeasurement(); measState = IDLE;      refreshDisplay(true); break;
         }
+        pendingCmd = -1;
     }
 
-    // ── Button A — toggle session ──
+    // Button A — toggle session
     static bool prevA = HIGH;
     bool curA = digitalRead(PIN_BUTTON1);
     if (prevA && !curA) {
-        if (measState == IDLE) {
-            resetMeasurement();
-            measState = MEASURING;
-        } else {
-            measState = IDLE;
-        }
+        if (measState == IDLE) { resetMeasurement(); measState = MEASURING; }
+        else                   { measState = IDLE; }
         refreshDisplay(true);
     }
     prevA = curA;
 
-    // ── Button B — manual waypoint ──
+    // Button B — manual waypoint
     static bool prevB = HIGH;
     bool curB = digitalRead(PIN_BUTTON2);
     if (prevB && !curB && measState == MEASURING) {
@@ -329,31 +301,31 @@ void loop() {
     }
     prevB = curB;
 
-    // ── 100 Hz sensor tick ────────────────────────────────────────────────────
+    // 100 Hz sensor tick
     if ((int32_t)(micros() - nextLoopUs) < 0) return;
     nextLoopUs += (uint32_t)(DT * 1.0e6f);
 
     // Read IMU
     sensors_event_t aEv, gEv, tEv;
     imu.getEvent(&aEv, &gEv, &tEv);
-    float ax = aEv.acceleration.x;   // m/s²
+    float ax = aEv.acceleration.x;
     float ay = aEv.acceleration.y;
     float az = aEv.acceleration.z;
-    float gx = gEv.gyro.x;           // rad/s
+    float gx = gEv.gyro.x;
     float gy = gEv.gyro.y;
     float gz = gEv.gyro.z;
 
     // Read magnetometer
     sensors_event_t mEv;
     mag.getEvent(&mEv);
-    float mx = mEv.magnetic.x;       // µT
+    float mx = mEv.magnetic.x;
     float my = mEv.magnetic.y;
     float mz = mEv.magnetic.z;
 
-    // 9-DOF Madgwick update — runs even while IDLE so filter converges
+    // Madgwick update — runs in IDLE too so filter converges before measuring
     ahrs.update(gx, gy, gz, ax, ay, az, mx, my, mz);
 
-    // ── Periodic display refresh (~5 Hz) ──
+    // Display refresh ~5 Hz
     if (++dispTick >= 20) {
         refreshDisplay();
         dispTick = 0;
@@ -361,37 +333,30 @@ void loop() {
 
     if (measState != MEASURING) return;
 
-    // ── Quaternion → world-frame acceleration ─────────────────────────────────
+    // Quaternion → world-frame acceleration
     float qw, qx, qy, qz;
     ahrs.getQuaternion(&qw, &qx, &qy, &qz);
 
     float wax, way, waz;
     quatRotate(qw, qx, qy, qz, ax, ay, az, wax, way, waz);
 
-    // Remove gravity from the world-frame Z axis.
-    // The Madgwick filter (ENU convention) puts +Z upward, so a stationary
-    // sensor reads +9.81 m/s² in world Z.  If your readings look inverted,
-    // change the sign here to += 9.81f.
+    // Remove gravity (ENU: +Z up, stationary reads +9.81 in world Z).
+    // If distance grows when stationary, change -= to +=
     waz -= 9.81f;
 
-    // ── ZUPT (Zero-Velocity Update) ───────────────────────────────────────────
+    // ZUPT
     float accelDev = fabsf(sqrtf(ax*ax + ay*ay + az*az) - 9.81f);
     float gyroMag  = sqrtf(gx*gx + gy*gy + gz*gz);
     bool  still    = (accelDev < ZUPT_ACCEL_THR) && (gyroMag < ZUPT_GYRO_THR);
 
-    if (still) {
-        if (zuptTicks < ZUPT_HOLD) zuptTicks++;
-    } else {
-        if (zuptTicks > 0) zuptTicks--;
-    }
+    if (still) { if (zuptTicks < ZUPT_HOLD) zuptTicks++; }
+    else       { if (zuptTicks > 0)         zuptTicks--; }
 
     bool stationary = (zuptTicks >= ZUPT_HOLD);
 
     if (stationary) {
-        vx = vy = vz = 0.0f;   // hard-reset velocity drift when still
-        if (!wasStationary) {
-            logWaypoint();      // leading edge of stillness → auto-log corner
-        }
+        vx = vy = vz = 0.0f;
+        if (!wasStationary) logWaypoint();  // auto-log on leading edge of stillness
     } else {
         vx += wax * DT;
         vy += way * DT;
@@ -399,7 +364,6 @@ void loop() {
     }
     wasStationary = stationary;
 
-    // ── Position integration ──────────────────────────────────────────────────
     float dx = vx * DT;
     float dy = vy * DT;
     float dz = vz * DT;
