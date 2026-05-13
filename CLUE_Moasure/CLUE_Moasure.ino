@@ -225,7 +225,7 @@ void setup() {
     Serial.println("IMU OK");
     if (!mag.begin_I2C()) { Serial.println("Mag fail");  tft.println("Mag fail!");  while (1) delay(10); }
     Serial.println("Mag OK");
-    if (!baro.begin(0x76)) { Serial.println("Baro fail"); tft.println("Baro fail!"); while (1) delay(10); }
+    if (!baro.begin(0x77)) { Serial.println("Baro fail"); tft.println("Baro fail!"); while (1) delay(10); }
     Serial.println("Baro OK");
 
     imu.setAccelRange(LSM6DS_ACCEL_RANGE_4_G);
