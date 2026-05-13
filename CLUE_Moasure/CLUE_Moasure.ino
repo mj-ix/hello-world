@@ -225,8 +225,17 @@ void setup() {
     Serial.println("IMU OK");
     if (!mag.begin_I2C()) { Serial.println("Mag fail");  tft.println("Mag fail!");  while (1) delay(10); }
     Serial.println("Mag OK");
-    if (!baro.begin(0x77)) { Serial.println("Baro fail"); tft.println("Baro fail!"); while (1) delay(10); }
-    Serial.println("Baro OK");
+
+    // BMP280 chip-ID probe — some CLUE units have 0x58, others 0x60
+    Wire.beginTransmission(0x77);
+    Wire.write(0xD0);
+    Wire.endTransmission();
+    Wire.requestFrom((uint8_t)0x77, (uint8_t)1);
+    uint8_t baroChipId = Wire.available() ? Wire.read() : 0;
+    Serial.print("Baro chip ID: 0x"); Serial.println(baroChipId, HEX);
+
+    bool baroOk = baro.begin(0x77, baroChipId);
+    Serial.println(baroOk ? "Baro OK" : "Baro fail (elevation disabled)");
 
     imu.setAccelRange(LSM6DS_ACCEL_RANGE_4_G);
     imu.setAccelDataRate(LSM6DS_RATE_104_HZ);
