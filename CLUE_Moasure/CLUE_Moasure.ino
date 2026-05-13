@@ -246,13 +246,15 @@ void setup() {
     mag.setRange(LIS3MDL_RANGE_4_GAUSS);
     mag.setPerformanceMode(LIS3MDL_HIGHMODE);
     mag.setOperationMode(LIS3MDL_CONTINUOUSMODE);
+    Serial.println("Sensors configured");
 
     pinMode(PIN_BUTTON1, INPUT_PULLUP);
     pinMode(PIN_BUTTON2, INPUT_PULLUP);
 
-    // BLE — using Adafruit Bluefruit (built into the nRF52 BSP)
+    Serial.println("Starting BLE...");
     Bluefruit.begin();
     Bluefruit.setName("Moasure-DIY");
+    Serial.println("BLE init done");
 
     measSvc.begin();
 
@@ -266,6 +268,7 @@ void setup() {
     cmdChar.setFixedLen(1);
     cmdChar.setWriteCallback(onCmdWrite);
     cmdChar.begin();
+    Serial.println("BLE chars done");
 
     Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
     Bluefruit.Advertising.addTxPower();
@@ -275,10 +278,13 @@ void setup() {
     Bluefruit.Advertising.setInterval(32, 244);
     Bluefruit.Advertising.setFastTimeout(30);
     Bluefruit.Advertising.start(0);
+    Serial.println("Advertising");
 
     resetMeasurement();
+    Serial.println("Reset done");
     tft.fillScreen(ST77XX_BLACK);
     refreshDisplay(true);
+    Serial.println("Display drawn");
 
     nextLoopUs = micros();
 }
