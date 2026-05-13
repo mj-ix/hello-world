@@ -258,8 +258,8 @@ void setup() {
     mag.setOperationMode(LIS3MDL_CONTINUOUSMODE);
 
     // ── buttons ──
-    pinMode(PIN_BUTTON_A, INPUT_PULLUP);
-    pinMode(PIN_BUTTON_B, INPUT_PULLUP);
+    pinMode(PIN_BUTTON1, INPUT_PULLUP);
+    pinMode(PIN_BUTTON2, INPUT_PULLUP);
 
     // ── BLE ──
     if (!BLE.begin()) {
@@ -308,7 +308,7 @@ void loop() {
 
     // ── Button A — toggle session ──
     static bool prevA = HIGH;
-    bool curA = digitalRead(PIN_BUTTON_A);
+    bool curA = digitalRead(PIN_BUTTON1);
     if (prevA && !curA) {
         if (measState == IDLE) {
             resetMeasurement();
@@ -322,7 +322,7 @@ void loop() {
 
     // ── Button B — manual waypoint ──
     static bool prevB = HIGH;
-    bool curB = digitalRead(PIN_BUTTON_B);
+    bool curB = digitalRead(PIN_BUTTON2);
     if (prevB && !curB && measState == MEASURING) {
         logWaypoint();
         refreshDisplay();
