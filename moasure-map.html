@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Moasure DIY — Live Map</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0a0a0a;
+      color: #eee;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      overflow: hidden;
+    }
+
+    /* ── iOS / no-BLE notice ─────────────────────────────────────────────── */
+    #notice {
+      display: none;
+      background: #1c1700;
+      color: #ffd60a;
+      font-size: 0.78rem;
+      text-align: center;
+      padding: 8px 14px;
+      line-height: 1.5;
+      flex-shrink: 0;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    #header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: #111;
+      border-bottom: 1px solid #1e1e1e;
+      flex-shrink: 0;
+    }
+    #title { font-size: 1.1rem; font-weight: 700; letter-spacing: 0.03em; }
+    #ble-status { display: flex; align-items: center; gap: 6px; }
+    #status-dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: #3a3a3a;
+    }
+    #status-dot.connected   { background: #30d158; }
+    #status-dot.connecting  { background: #f5a623; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    #status-text { font-size: 0.8rem; color: #777; }
+
+    /* ── Map ─────────────────────────────────────────────────────────────── */
+    #canvas-wrap {
+      flex: 1;
+      position: relative;
+      background: #0d0d0d;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    #map-hint {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      color: #3a3a3a;
+      font-size: 0.9rem;
+      pointer-events: none;
+    }
+    #map-hint svg { opacity: 0.25; }
+
+    /* ── Stats ───────────────────────────────────────────────────────────── */
+    #stats {
+      display: flex;
+      justify-content: space-around;
+      background: #111;
+      border-top: 1px solid #1e1e1e;
+      padding: 10px 0 8px;
+      flex-shrink: 0;
+    }
+    .stat { text-align: center; min-width: 80px; }
+    .stat-val {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.01em;
+    }
+    .stat-lbl {
+      font-size: 0.62rem;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-top: 3px;
+    }
+
+    /* ── Controls ────────────────────────────────────────────────────────── */
+    #controls {
+      display: flex;
+      gap: 8px;
+      padding: 10px 12px 14px;
+      background: #0a0a0a;
+      flex-shrink: 0;
+    }
+    button {
+      flex: 1;
+      padding: 14px 6px;
+      border: none;
+      border-radius: 12px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.1s, opacity 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    button:active { transform: scale(0.96); }
+    button:disabled { opacity: 0.28; cursor: default; }
+    #btnConnect { background: #0a84ff; color: #fff; }
+    #btnStart   { background: #30d158; color: #000; }
+    #btnStop    { background: #ff453a; color: #fff; display: none; }
+    #btnReset   { background: #2c2c2e; color: #eee; }
+  </style>
+</head>
+<body>
+
+<div id="notice"></div>
+
+<div id="header">
+  <div id="title">Moasure DIY</div>
+  <div id="ble-status">
+    <span id="status-dot"></span>
+    <span id="status-text">Disconnected</span>
+  </div>
+</div>
+
+<div id="canvas-wrap">
+  <canvas id="map"></canvas>
+  <div id="map-hint">
+    <svg width="52" height="52" viewBox="0 0 24 24" fill="none"
+         stroke="#eee" stroke-width="1.3" stroke-linecap="round">
+      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+      <circle cx="12" cy="9" r="2.5"/>
+    </svg>
+    <div id="hint-text">Connect your CLUE to start</div>
+  </div>
+</div>
+
+<div id="stats">
+  <div class="stat">
+    <div class="stat-val" id="stat-dist">—</div>
+    <div class="stat-lbl">Distance</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val" id="stat-area">—</div>
+    <div class="stat-lbl">Area</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val" id="stat-pts">0</div>
+    <div class="stat-lbl">Waypoints</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val" id="stat-elev">—</div>
+    <div class="stat-lbl">Elevation</div>
+  </div>
+</div>
+
+<div id="controls">
+  <button id="btnConnect">Connect</button>
+  <button id="btnStart"  disabled>Start</button>
+  <button id="btnStop">Stop</button>
+  <button id="btnReset"  disabled>Reset</button>
+</div>
+
+<script>
+// ── UUIDs ────────────────────────────────────────────────────────────────────
+const SVC_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
+const WP_UUID  = '19b10001-e8f2-537e-4f6c-d104768a1214';
+const CMD_UUID = '19b10002-e8f2-537e-4f6c-d104768a1214';
+
+// ── State ────────────────────────────────────────────────────────────────────
+let bleDevice = null, cmdChar = null;
+let waypoints = [];   // [{x, y, z}] in metres, ENU frame
+let measuring = false;
+
+// ── Canvas ───────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('map');
+const ctx    = canvas.getContext('2d');
+const dpr    = window.devicePixelRatio || 1;
+
+function resizeCanvas() {
+  const wrap = document.getElementById('canvas-wrap');
+  canvas.width  = wrap.clientWidth  * dpr;
+  canvas.height = wrap.clientHeight * dpr;
+  redraw();
+}
+window.addEventListener('resize', resizeCanvas);
+
+// ── BLE connect / disconnect ─────────────────────────────────────────────────
+document.getElementById('btnConnect').addEventListener('click', async () => {
+  if (bleDevice && bleDevice.gatt.connected) {
+    bleDevice.gatt.disconnect();
+    return;
+  }
+  try {
+    setStatus('connecting');
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ name: 'Moasure-DIY' }],
+      optionalServices: [SVC_UUID]
+    });
+    bleDevice.addEventListener('gattserverdisconnected', onDisconnect);
+
+    const server = await bleDevice.gatt.connect();
+    const svc    = await server.getPrimaryService(SVC_UUID);
+    cmdChar      = await svc.getCharacteristic(CMD_UUID);
+
+    const wpChar = await svc.getCharacteristic(WP_UUID);
+    await wpChar.startNotifications();
+    wpChar.addEventListener('characteristicvaluechanged', onWaypoint);
+
+    setStatus('connected');
+  } catch(err) {
+    console.error('BLE connect error:', err);
+    setStatus('disconnected');
+  }
+});
+
+// ── Measure controls ─────────────────────────────────────────────────────────
+document.getElementById('btnStart').addEventListener('click', async () => {
+  waypoints = [];
+  redraw();
+  updateStats();
+  await sendCmd(1);   // 1 = start
+  measuring = true;
+  document.getElementById('btnStart').style.display = 'none';
+  document.getElementById('btnStop').style.display  = 'inline-flex';
+  document.getElementById('map-hint').style.display = 'flex';
+  document.getElementById('hint-text').textContent  = 'Move to first corner, then hold still…';
+});
+
+document.getElementById('btnStop').addEventListener('click', async () => {
+  await sendCmd(0);   // 0 = idle
+  measuring = false;
+  document.getElementById('btnStop').style.display  = 'none';
+  document.getElementById('btnStart').style.display = 'inline-flex';
+});
+
+document.getElementById('btnReset').addEventListener('click', async () => {
+  waypoints = [];
+  redraw();
+  updateStats();
+  await sendCmd(2);   // 2 = reset
+  measuring = false;
+  document.getElementById('btnStop').style.display  = 'none';
+  document.getElementById('btnStart').style.display = 'inline-flex';
+  document.getElementById('map-hint').style.display = 'flex';
+  document.getElementById('hint-text').textContent  = 'Press Start to begin measuring';
+});
+
+async function sendCmd(byte) {
+  if (!cmdChar) return;
+  try { await cmdChar.writeValue(new Uint8Array([byte])); }
+  catch(e) { console.warn('sendCmd failed:', e); }
+}
+
+// ── Waypoint received ────────────────────────────────────────────────────────
+function onWaypoint(event) {
+  const dv = event.target.value;
+  if (dv.byteLength < 12) return;
+  const x = dv.getFloat32(0, true);   // little-endian
+  const y = dv.getFloat32(4, true);
+  const z = dv.getFloat32(8, true);
+  if (!isFinite(x) || !isFinite(y) || !isFinite(z)) return;
+
+  waypoints.push({ x, y, z });
+  document.getElementById('map-hint').style.display = 'none';
+  redraw();
+  updateStats();
+}
+
+function onDisconnect() {
+  cmdChar   = null;
+  measuring = false;
+  setStatus('disconnected');
+  document.getElementById('btnStop').style.display  = 'none';
+  document.getElementById('btnStart').style.display = 'inline-flex';
+}
+
+// ── Status helper ────────────────────────────────────────────────────────────
+function setStatus(s) {
+  const dot    = document.getElementById('status-dot');
+  const text   = document.getElementById('status-text');
+  const isConn = bleDevice && bleDevice.gatt.connected;
+
+  dot.className  = s;
+  text.textContent = s === 'connected'  ? 'Connected' :
+                     s === 'connecting' ? 'Connecting…' : 'Disconnected';
+
+  document.getElementById('btnConnect').textContent = isConn ? 'Disconnect' : 'Connect';
+  document.getElementById('btnStart').disabled = !isConn;
+  document.getElementById('btnReset').disabled = !isConn;
+
+  if (s === 'connected') {
+    document.getElementById('hint-text').textContent = 'Press Start to begin measuring';
+  }
+}
+
+// ── Map drawing ──────────────────────────────────────────────────────────────
+function redraw() {
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  if (waypoints.length === 0) return;
+
+  // One waypoint: just draw a dot in the centre
+  if (waypoints.length === 1) {
+    ctx.beginPath();
+    ctx.arc(W / 2, H / 2, 7 * dpr, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffd60a';
+    ctx.fill();
+    return;
+  }
+
+  // Compute world bounds
+  const xs = waypoints.map(p => p.x);
+  const ys = waypoints.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const rangeX = maxX - minX || 0.5;
+  const rangeY = maxY - minY || 0.5;
+
+  const pad   = 50 * dpr;
+  const scale = Math.min((W - pad * 2) / rangeX, (H - pad * 2) / rangeY);
+
+  // World → canvas (Y is flipped: world up = canvas up = low canvas-y)
+  const offX = (W - rangeX * scale) / 2 - minX * scale;
+  const offY = (H - rangeY * scale) / 2 + maxY * scale;
+  const sx = p => offX + p.x * scale;
+  const sy = p => offY - p.y * scale;
+
+  // Check if path is "closed" (last point within 0.5 m of first)
+  const p0 = waypoints[0], pN = waypoints[waypoints.length - 1];
+  const isLoop = waypoints.length >= 3 &&
+                 Math.hypot(pN.x - p0.x, pN.y - p0.y) < 0.5;
+
+  // Filled area for closed loop
+  if (isLoop) {
+    ctx.beginPath();
+    ctx.moveTo(sx(waypoints[0]), sy(waypoints[0]));
+    for (let i = 1; i < waypoints.length; i++)
+      ctx.lineTo(sx(waypoints[i]), sy(waypoints[i]));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(48,209,88,0.10)';
+    ctx.fill();
+  }
+
+  // Path
+  ctx.beginPath();
+  ctx.strokeStyle = '#30d158';
+  ctx.lineWidth   = 2.5 * dpr;
+  ctx.lineJoin    = 'round';
+  ctx.lineCap     = 'round';
+  ctx.moveTo(sx(waypoints[0]), sy(waypoints[0]));
+  for (let i = 1; i < waypoints.length; i++)
+    ctx.lineTo(sx(waypoints[i]), sy(waypoints[i]));
+  if (isLoop) ctx.closePath();
+  ctx.stroke();
+
+  // Segment distance labels (only if they'd fit)
+  ctx.fillStyle = '#4a8f5f';
+  ctx.font = `${10 * dpr}px -apple-system, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 1; i < waypoints.length; i++) {
+    const a = waypoints[i-1], b = waypoints[i];
+    const segDist = Math.hypot(b.x - a.x, b.y - a.y);
+    if (segDist < 0.05) continue;   // skip tiny segments
+    const mx = (sx(a) + sx(b)) / 2;
+    const my = (sy(a) + sy(b)) / 2;
+    ctx.fillText(segDist.toFixed(2) + 'm', mx, my - 10 * dpr);
+  }
+
+  // Waypoint dots + labels
+  const R = 6 * dpr;
+  for (let i = 0; i < waypoints.length; i++) {
+    const p = waypoints[i];
+    // Dot
+    ctx.beginPath();
+    ctx.arc(sx(p), sy(p), R, 0, Math.PI * 2);
+    ctx.fillStyle   = i === 0 ? '#ffd60a' : '#ff453a';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth   = 1.5 * dpr;
+    ctx.fill();
+    ctx.stroke();
+    // Label
+    ctx.fillStyle = '#ccc';
+    ctx.font = `${10 * dpr}px -apple-system, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(i === 0 ? 'start' : `${i}`, sx(p), sy(p) - R - 2 * dpr);
+  }
+
+  // Scale bar
+  const niceStep = niceMeter(Math.min(rangeX, rangeY) * 0.25);
+  const barPx    = niceStep * scale;
+  const bx = pad + 4 * dpr, by = H - pad / 2;
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth   = 2 * dpr;
+  ctx.lineCap     = 'square';
+  ctx.beginPath();
+  ctx.moveTo(bx,        by);
+  ctx.lineTo(bx + barPx, by);
+  ctx.moveTo(bx,        by - 5 * dpr);
+  ctx.lineTo(bx,        by + 5 * dpr);
+  ctx.moveTo(bx + barPx, by - 5 * dpr);
+  ctx.lineTo(bx + barPx, by + 5 * dpr);
+  ctx.stroke();
+  ctx.fillStyle = '#666';
+  ctx.font = `${10 * dpr}px -apple-system, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(niceStep >= 1 ? `${niceStep} m` : `${niceStep * 100} cm`,
+               bx + barPx / 2, by - 7 * dpr);
+}
+
+// Pick a human-readable metre step for the scale bar
+function niceMeter(m) {
+  return [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50].find(s => s >= m) || 50;
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+function updateStats() {
+  const n = waypoints.length;
+
+  // Total 2D path length
+  let dist = 0;
+  for (let i = 1; i < n; i++)
+    dist += Math.hypot(waypoints[i].x - waypoints[i-1].x,
+                       waypoints[i].y - waypoints[i-1].y);
+
+  // Shoelace area (2D projection, ignore Z)
+  let area = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += waypoints[i].x * waypoints[j].y;
+    area -= waypoints[j].x * waypoints[i].y;
+  }
+  area = Math.abs(area) / 2;
+
+  // Elevation span
+  let elev = '—';
+  if (n >= 2) {
+    const zs  = waypoints.map(p => p.z);
+    const dz  = Math.max(...zs) - Math.min(...zs);
+    elev = dz.toFixed(2) + ' m';
+  }
+
+  document.getElementById('stat-dist').textContent = n > 0 ? dist.toFixed(2) + ' m' : '—';
+  document.getElementById('stat-area').textContent = area > 0.05 ? area.toFixed(2) + ' m²' : '—';
+  document.getElementById('stat-pts').textContent  = n;
+  document.getElementById('stat-elev').textContent = elev;
+}
+
+// ── Platform detection ────────────────────────────────────────────────────────
+const notice = document.getElementById('notice');
+
+if (!navigator.bluetooth) {
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+    notice.style.display = 'block';
+    notice.innerHTML = 'Safari doesn\'t support Web Bluetooth. ' +
+      'Install the free <strong>Bluefy</strong> browser app and open this page there.';
+  } else {
+    notice.style.display = 'block';
+    notice.textContent = 'Web Bluetooth not available. Use Chrome on Android or Bluefy on iOS.';
+  }
+  document.getElementById('btnConnect').disabled = true;
+  document.getElementById('btnConnect').textContent = 'BLE not available';
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+resizeCanvas();
+</script>
+</body>
+</html>
