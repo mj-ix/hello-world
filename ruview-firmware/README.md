@@ -57,11 +57,23 @@ Go slowly and do the steps in order. Steps 1–3 are only done once.
    python3 --version
    ```
 
-   It should say **Python 3.13** or similar. (If a box pops up asking to
+   It should say **Python 3.** followed by numbers. (If a box pops up asking to
    install "command line developer tools", click **Cancel**, quit Terminal with
    **⌘ + Q**, open it again, and retry. The Python installer needs a fresh
    Terminal window.)
-3. Paste this line and press Return:
+3. Make a private folder for the board tools (a "virtual environment"), so they
+   don't interfere with anything else on the Mac. Paste these two lines one at a
+   time, pressing Return after each:
+
+   ```
+   python3 -m venv ~/ruview-env
+   ```
+   ```
+   source ~/ruview-env/bin/activate
+   ```
+
+   Your Terminal line now starts with **(ruview-env)**.
+4. Paste this line and press Return:
 
    ```
    python3 -m pip install "esptool>=5.0" esp-idf-nvs-partition-gen pyserial
@@ -70,15 +82,20 @@ Go slowly and do the steps in order. Steps 1–3 are only done once.
    Text scrolls for a minute. It's done when it says
    **Successfully installed…**
 
-## Step 4: Go to the firmware folder
+## Step 4: Each time you open Terminal
 
-**Do this each time you open a new Terminal window.** Paste and press Return:
+**Do this every time you open a new Terminal window**, before the steps below.
+Paste these two lines one at a time, pressing Return after each:
 
+```
+source ~/ruview-env/bin/activate
+```
 ```
 cd ~/Downloads/hello-world-ccr-cbf88bb5-osmutu/ruview-firmware
 ```
 
-Nothing visible happens; that's normal.
+Your Terminal line should start with **(ruview-env)**. If later steps say
+`No module named esptool`, you skipped the first line; run it and try again.
 
 ## Step 5: Plug in the board and let the Mac find it
 
