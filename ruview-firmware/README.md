@@ -286,6 +286,12 @@ Built from [ruvnet/RuView](https://github.com/ruvnet/RuView) `a175477`
 - **The onboard LED is switched off** (`sdkconfig.defaults.ledoff`, included here). RuView's
   default drives it as a 40 Hz strobe (`CONFIG_LED_GAMMA_VIZ`, ADR-183), which
   doesn't belong in a bedroom. Builds made before 2026-11-10 02:00 UTC still strobe.
+- **C6 build only: radar reports the nearer target.** The LD2410C tracks a moving and
+  a still target separately. Stock RuView reports the moving one whenever both exist,
+  so a distant moving object (pet, door, hallway reflection) could replace a nearby
+  still person. `patches-ld2410-nearest-target.patch` (against RuView `a175477`)
+  reports the nearer one instead. Seen on hardware: readings flipping between 0.7 m
+  (person) and 3 m (something else).
 - **Flash layout** (all three): bootloader `0x0`, partition table `0x8000`,
   otadata `0xf000`, app `0x20000`.
 - **S3-Touch-LCD-1.83** has 16 MB flash; the 8 MB image leaves the rest unused.

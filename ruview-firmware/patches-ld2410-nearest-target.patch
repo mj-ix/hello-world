@@ -1,0 +1,21 @@
+diff --git a/firmware/esp32-csi-node/main/mmwave_sensor.c b/firmware/esp32-csi-node/main/mmwave_sensor.c
+index d63f304..6b4b43a 100644
+--- a/firmware/esp32-csi-node/main/mmwave_sensor.c
++++ b/firmware/esp32-csi-node/main/mmwave_sensor.c
+@@ -264,7 +264,15 @@ static void ld2410_process_frame(const uint8_t *data, uint16_t len)
+     s_state.person_present = (target_state != 0);
+     s_state.target_count = (target_state != 0) ? 1 : 0;
+ 
+-    if (target_state == 1 || target_state == 3) {
++    if (target_state == 3) {
++        /* Moving and static targets both present: report the nearer one.
++         * A still person close by matters more than a distant moving
++         * object (a pet, a door, a hallway reflection). A zero distance
++         * means "no target in that slot" and is ignored. */
++        uint16_t d = moving_dist;
++        if (static_dist != 0 && (d == 0 || static_dist < d)) d = static_dist;
++        s_state.distance_cm = (float)d;
++    } else if (target_state == 1) {
+         s_state.distance_cm = (float)moving_dist;
+     } else if (target_state == 2) {
+         s_state.distance_cm = (float)static_dist;
