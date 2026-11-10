@@ -185,6 +185,18 @@ name, then repeat step 7.
 **Send a screenshot of what it printed to Claude** (press **⌘ + Shift + 4**
 and drag over the Terminal window), and we'll go from there.
 
+## Step 8½: Watch it sense, in plain English
+
+```
+python3 presence.py
+```
+
+Every 3 seconds it prints one line per board: whether someone seems to be
+there, whether they're moving, and the board's **fall flag**. Walk around,
+stand still, leave the room, and watch it change. Press **Control + C** to
+stop. These are the board's own experimental estimates, so test them before
+trusting them.
+
 ## Step 9: The other boards (later)
 
 For each board: plug it in alone, then do steps 5–7 again with these changes.
