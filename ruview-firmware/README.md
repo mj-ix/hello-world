@@ -4,7 +4,13 @@ This folder holds ready-made software ("firmware") for the little ESP32 boards.
 Once a board has it, the board joins your home WiFi and sends WiFi-sensing data
 to your MacBook.
 
-**Status: built, but not yet tested on a real board.**
+**Status:** the ESP32-C6 build has run on a real Waveshare ESP32-C6-LCD-1.47:
+it booted, joined home WiFi, and streamed WiFi-sensing data to the Mac
+(2026-11-10). The S3 builds haven't been tried on a board yet.
+
+**Tip:** if a board won't join the WiFi (the log shows `reason=2` or
+`reason=201`), move it closer to the router. Its small antenna needs a decent
+signal. `python3 watch_log.py $PORT` shows the board's startup log.
 
 ---
 
