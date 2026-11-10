@@ -202,9 +202,16 @@ trusting them.
 
 ## Watch from your phone
 
-`presence_web.py` shows the same information as `presence.py` as a page you can
-open on your phone: a big "Someone there / Empty", WiFi motion, the radar, the
-fall flag (with a red banner), and a 30-minute timeline.
+`presence_web.py` shows the boards as a page you can open on your phone: a big
+"Someone there / Empty", WiFi activity, the radar, the fall flag (with a red
+banner), and a 30-minute timeline.
+
+With a radar fitted, **the radar alone decides "Someone there"**: it only
+watches its own area. WiFi sensing reacts to activity anywhere between the
+board and the router (other rooms, people and pets moving), so it's shown as a
+whole-area **activity level** instead. On real hardware its "moving" flag was on
+almost constantly, because the firmware sets it at a motion level of 0.01
+while normal readings run 2–20.
 
 1. Download it (once) and start it. `caffeinate -i` keeps the Mac from going to
    sleep while it runs:

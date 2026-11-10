@@ -73,7 +73,7 @@ def _collector():
                 _state["nodes"][s["node"]] = s
                 h = _history[s["node"]]
                 radar = s["radar"]["present"] if s["radar"] else None
-                h.append((round(now), s["present"], s["moving"], radar))
+                h.append((round(now), s["present"], round(s["motion"] or 0, 1), radar))
                 while h and h[0][0] < now - HISTORY_S:
                     h.popleft()
 
@@ -128,18 +128,25 @@ h1{font-size:20px;margin:4px 0 2px}.sub{color:var(--muted);font-size:13px;margin
 <div id="cards"></div>
 <div class="note">Experimental readings from homemade sensors. Not a medical or safety device.</div>
 <script>
+const QUIET = 3, BUSY = 8;  // WiFi motion-energy bands seen on real hardware (2-20 typical)
 const T = new URLSearchParams(location.search).get("t") || "";
 const $ = (id) => document.getElementById(id);
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
 function timeline(h, span, now){
   const bins = 60, out = Array(bins).fill(null);
   for (const [t,p,m,r] of h){ const i = Math.floor((t-(now-span))/span*bins); if(i>=0&&i<bins){
-    const lvl = (p||r)?(m?2:1):0; out[i] = Math.max(out[i]??0, lvl);} }
+    const here = (r===null||r===undefined) ? p : r;
+    const lvl = here ? (m >= BUSY ? 2 : 1) : 0; out[i] = Math.max(out[i]??0, lvl);} }
   const col = ["var(--off)","var(--on)","var(--move)"];
   return out.map(v=>`<i style="background:${v==null?"transparent":col[v]};opacity:${v==null?1:(v?1:.35)}"></i>`).join("");
 }
 function card(n, span, now){
-  const who = n.radar ? (n.present || n.radar.present) : n.present;
+  // The radar watches only its own area; WiFi sensing reacts to activity
+  // anywhere between the board and the router, so with a radar fitted the
+  // radar alone decides "someone there".
+  const who = n.radar ? n.radar.present : n.present;
+  const m = n.motion || 0;
+  const act = m < QUIET ? ["Quiet","off"] : m < BUSY ? ["Some activity","mv"] : ["Lots of activity","mv"];
   const status = !n.hasVitals ? '<span class="off">Waiting…</span>'
     : who ? '<span class="on">Someone there</span>' : '<span class="off">Empty</span>';
   const motion = Math.max(0, Math.min(100, (n.motion||0)/20*100));
@@ -148,12 +155,12 @@ function card(n, span, now){
     <div class="row"><span class="name">Board ${esc(n.node)}</span>
       <span class="age">${n.stale?'<span class="fall">no data for '+n.ageS+' s</span>':'updated '+n.ageS+' s ago'}</span></div>
     <div class="big">${status}</div>
-    <div class="kv"><span>WiFi sensing</span><span class="${n.moving?"mv":"off"}">${n.moving?"Moving":"Still"}</span></div>
+    <div class="kv"><span>WiFi activity (whole area)</span><span class="${act[1]}">${act[0]} · ${m.toFixed(1)}</span></div>
     <div class="meter"><i style="width:${motion}%"></i></div>
     ${radar}
     <div class="kv"><span>Fall flag</span><span class="${n.fall?"fall":"off"}">${n.fall?"RAISED":"no"}</span></div>
     <div class="tl">${timeline(n.history, span, now)}</div>
-    <div class="legend"><span>30 min ago</span><span><b style="color:var(--off);opacity:.5">■</b> empty <b style="color:var(--on)">■</b> there <b style="color:var(--move)">■</b> moving</span><span>now</span></div>
+    <div class="legend"><span>30 min ago</span><span><b style="color:var(--off);opacity:.5">■</b> empty <b style="color:var(--on)">■</b> there <b style="color:var(--move)">■</b> there, busy</span><span>now</span></div>
   </div>`;
 }
 async function tick(){
