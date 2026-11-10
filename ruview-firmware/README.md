@@ -197,6 +197,52 @@ stand still, leave the room, and watch it change. Press **Control + C** to
 stop. These are the board's own experimental estimates, so test them before
 trusting them.
 
+## Adding the LD2410C radar to the ESP32-C6
+
+The radar plugs straight into the ESP32-C6 board. The board reads it and sends
+the radar's results along with its WiFi sensing. No extra adapter needed.
+
+**You'll need:** the LD2410C radar and **4 female-to-female jumper wires**
+(the kind with a little socket on both ends). Do the wiring at a desk, not in
+a room where someone is sleeping.
+
+1. **Unplug the ESP32-C6 from USB** before connecting anything.
+2. **Take any SD card out** of the ESP32-C6's card slot. The radar uses the
+   same two pins (GPIO4 and GPIO5).
+3. Connect 4 wires. The labels are printed next to the pins on each board:
+
+   | LD2410C pin | ESP32-C6 pin |
+   |---|---|
+   | **VCC** | **5V** (may be labelled VBUS) |
+   | **GND** | **GND** |
+   | **TX** | **5** (GPIO5) |
+   | **RX** | **4** (GPIO4) |
+
+   Leave the radar's **OUT** pin unconnected. TX goes to 5 and RX goes to 4;
+   they cross over on purpose.
+4. Plug the ESP32-C6 back into the Mac and check it found the radar (this
+   watches the board's startup log; press **RESET** on the board after
+   starting it):
+
+   ```
+   PORT=$(ls /dev/cu.usbmodem* | head -1); python3 watch_log.py $PORT 30
+   ```
+
+   Look for **Detected LD2410 at 256000 baud**. If it says
+   **No mmWave sensor detected**, check the wires (especially that TX and RX
+   are crossed) and press RESET again. The board only looks for a radar when it
+   starts up.
+5. Run `python3 presence.py`. Each line now ends with what the radar sees,
+   e.g. `| radar: SOMEONE THERE at 1.4 m` or `| radar: nobody`.
+
+**Good to know:**
+- The radar sends a very weak 24 GHz signal, like a motion-sensor light. It's
+  silent and has no lights.
+- It can't tell a person from a pet: a dog moving or breathing nearby will
+  register as "someone there".
+- Point the flat side with the gold antenna pattern toward the area you want to
+  watch. It sees up to about 5–6 m.
+
 ## Step 9: The other boards (later)
 
 For each board: plug it in alone, then do steps 5–7 again with these changes.

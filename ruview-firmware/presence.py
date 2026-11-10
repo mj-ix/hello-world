@@ -49,7 +49,13 @@ def line_for(node):
     energy = v.get("motionEnergy")
     text = (f"  board {nid}: {present:<13}  {moving:<6}  "
             f"presence [{bar(score, 20)}] {score:5.1f}  "
-            f"motion [{bar(energy, 1)}] {energy:4.2f}")
+            f"motion [{bar(energy, 20)}] {energy:5.1f}")
+    if "mmwavePresent" in v:  # a radar is wired to this board
+        if v.get("mmwavePresent"):
+            dist = v.get("mmwaveDistanceCm") or 0
+            text += f"  | radar: SOMEONE THERE at {dist / 100:.1f} m"
+        else:
+            text += "  | radar: nobody"
     if v.get("fall"):
         text += "   <<< FALL FLAG >>>"
     return text
