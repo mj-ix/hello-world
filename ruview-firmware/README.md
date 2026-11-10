@@ -6,12 +6,21 @@ CSI-node firmware built from [ruvnet/RuView](https://github.com/ruvnet/RuView)
 
 | Folder | Board | Flash | Settings |
 |---|---|---|---|
-| `xiao-esp32s3-8mb/` | Seeed XIAO ESP32-S3 Sense | 8 MB | `sdkconfig.defaults` + `sdkconfig.defaults.devkitc` |
+| `xiao-esp32s3-8mb/` | Seeed XIAO ESP32-S3 Sense, **and** Waveshare ESP32-S3-Touch-LCD-1.83 | 8 MB | `sdkconfig.defaults` + `sdkconfig.defaults.devkitc` |
 | `esp32s3-zero-4mb/` | Waveshare ESP32-S3-Zero | 4 MB | `sdkconfig.defaults` + `sdkconfig.defaults.4mb` |
+| `esp32c6-4mb/` | Waveshare ESP32-C6-LCD-1.47 | 4 MB | `sdkconfig.defaults` + `sdkconfig.defaults.esp32c6` + `sdkconfig.defaults.devkitc` |
 
-Display support is compiled out of both. That matters: on a board with no
+Display support is compiled out of all three. That matters: on a board with no
 screen, the default build can wrongly detect one and then capture no WiFi data
-at all (RuView#893). Don't use the files in RuView's `release_bins/` folder;
+at all (RuView#893). RuView's display code only drives one AMOLED panel
+(SH8601); the Waveshare boards' ST7789 LCDs aren't supported, so their screens
+stay blank either way.
+
+- **S3-Touch-LCD-1.83:** it has 16 MB flash; flashing the 8 MB image with
+  `--flash_size 8MB` simply leaves the rest unused.
+- **C6-LCD-1.47:** flash with `--chip esp32c6 --flash_size 4MB` at the same four
+  offsets. ESP32-C6 is the chip RuView has confirmed capturing data on real
+  hardware. Don't use the files in RuView's `release_bins/` folder;
 the project marks them as old snapshots.
 
 **Status: built, not yet tested on a real board.** RuView only counts firmware
