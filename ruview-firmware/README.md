@@ -200,6 +200,42 @@ stand still, leave the room, and watch it change. Press **Control + C** to
 stop. These are the board's own experimental estimates, so test them before
 trusting them.
 
+## Watch from your phone
+
+`presence_web.py` shows the same information as `presence.py` as a page you can
+open on your phone: a big "Someone there / Empty", WiFi motion, the radar, the
+fall flag (with a red banner), and a 30-minute timeline.
+
+1. Download it (once) and start it. `caffeinate -i` keeps the Mac from going to
+   sleep while it runs:
+
+   ```
+   curl -fsSLO https://raw.githubusercontent.com/mj-ix/hello-world/ccr-cbf88bb5-osmutu/ruview-firmware/presence_web.py
+   ```
+   ```
+   caffeinate -i python3 presence_web.py
+   ```
+
+2. If the Mac asks whether **Python** may accept incoming connections, click
+   **Allow**.
+3. It prints a link like `http://192.168.1.161:8000/?t=Ab3dEf...`. On your phone
+   (on the same WiFi), type that whole link into Safari. Tip: tap **Share → Add
+   to Home Screen** to open it like an app.
+
+**Good to know:**
+- The part after `?t=` is a secret key. Without it the page shows nothing, so
+  other people on your WiFi can't see it. Don't share the link. A new key is
+  made every time you start it.
+- Only one program can listen to the boards at a time: stop `presence.py` (and
+  the step 8 check) before starting this, and vice versa.
+- The Mac needs to stay on, plugged in, and on the same WiFi as the boards.
+- **Away from home:** the phone can't reach the Mac over the internet on its
+  own. Don't open ports on your router for this. A safe option is
+  [Tailscale](https://tailscale.com) (free): install it on the Mac and the
+  phone, sign in to both with the same account, then use the Mac's Tailscale
+  address (shown in the Tailscale app, starting with `100.`) in place of
+  `192.168.1.161` in the link.
+
 ## Adding the LD2410C radar to the ESP32-C6
 
 The radar plugs straight into the ESP32-C6 board. The board reads it and sends
