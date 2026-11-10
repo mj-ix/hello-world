@@ -1,0 +1,320 @@
+diff --git a/harness/ruview/README.md b/harness/ruview/README.md
+index 2e107e1..2931d54 100644
+--- a/harness/ruview/README.md
++++ b/harness/ruview/README.md
+@@ -92,7 +92,7 @@ npx @ruvnet/ruview devices                                   # classify USB seri
+ npx @ruvnet/ruview esp32 --seconds 10                         # ESP32 / Realtek RAC1 node UDP stream (default :5005)
+ npx @ruvnet/ruview esp32 --seconds 45 --analyze               # ...and run live CSI through @ruvnet/ruview-kernel
+ npx @ruvnet/ruview monitor --port COM10 --baud 1500000        # serial console without resetting the node
+-npx @ruvnet/ruview mmwave --port /dev/ttyUSB0                 # MR60BHA2 60 GHz / LD2410 24 GHz, auto-detected
++npx @ruvnet/ruview mmwave --port /dev/ttyUSB0                 # MR60BHA2 60 GHz / LD2410 / LD2450 24 GHz, auto-detected (Rd-03D: --model rd03d)
+ npx @ruvnet/ruview lidar --source rplidar --port /dev/ttyUSB1 # RPLIDAR scan summary
+ RUVIEW_LIDAR_TOKEN=… npx @ruvnet/ruview lidar --source iphone --url ws://HOST:8787/ws/lidar
+ ```
+@@ -101,7 +101,7 @@ RUVIEW_LIDAR_TOKEN=… npx @ruvnet/ruview lidar --source iphone --url ws://HOST:
+ |---|---|---|
+ | `ruview_devices_scan` | pyserial port list + VID:PID roles (opens no port) | `device-access` |
+ | `ruview_esp32_capture` | receive-only UDP; CSI/vitals/feature packets per node, loss, RSSI | `device-access` |
+-| `ruview_mmwave_read` | serial; firmware-identical MR60BHA2/LD2410 parsers | `device-access` |
++| `ruview_mmwave_read` | serial; firmware-identical MR60BHA2/LD2410 parsers, host-only LD2450/Rd-03D tracker parser | `device-access` |
+ | `ruview_lidar_read` | RPLIDAR SCAN over serial, or iPhone relay WebSocket (stats only) | `device-access` |
+ | `ruview_host_list` | configured SSH hosts | none |
+ | `ruview_host_run` | one read-only tool on an SSH host | `remote-host` + the tool's grant |
+diff --git a/harness/ruview/src/cli.js b/harness/ruview/src/cli.js
+index 91c5ba5..e0fdd6d 100644
+--- a/harness/ruview/src/cli.js
++++ b/harness/ruview/src/cli.js
+@@ -187,7 +187,7 @@ Devices (ADR-373) — run on the machine the hardware is attached to:
+   esp32 [--udp-port 5005] [--seconds 10] [--bind 0.0.0.0]  receive + summarize ESP32 / Realtek RAC1 node UDP streams
+         [--analyze [--node-id N] [--backend wasm|napi|auto]]  run live CSI through @ruvnet/ruview-kernel
+         [--watch [--seconds 3]]                          live view: repeated windows with per-node trends
+-  mmwave --port <p> [--model auto|mr60bha2|ld2410] [--seconds 10]   60/24 GHz radar readout
++  mmwave --port <p> [--model auto|mr60bha2|ld2410|ld2450|rd03d] [--seconds 10]   60/24 GHz radar readout
+   mmwave --source esphome --host <ip> [--api-port 6053]   radar kit running ESPHome (e.g. Seeed MR60BHA2 kit)
+   lidar --source rplidar --port <p> [--baud 115200]      RPLIDAR scan summary
+   lidar --source iphone --url ws://HOST:8787/ws/lidar    iPhone LiDAR relay (token: RUVIEW_LIDAR_TOKEN)
+diff --git a/harness/ruview/src/devices/mmwave.js b/harness/ruview/src/devices/mmwave.js
+index 013f570..79fa8c3 100644
+--- a/harness/ruview/src/devices/mmwave.js
++++ b/harness/ruview/src/devices/mmwave.js
+@@ -1,14 +1,21 @@
+ // SPDX-License-Identifier: MIT
+-// mmWave radar access (ADR-373): Seeed MR60BHA2 (60 GHz, 115200 baud) and
+-// HLK-LD2410 (24 GHz, 256000 baud) over a USB-UART adapter. The parsers are
+-// byte-for-byte ports of firmware/esp32-csi-node/main/mmwave_sensor.c so the
+-// host and the node agree on what a valid frame is.
++// mmWave radar access (ADR-373): Seeed MR60BHA2 (60 GHz, 115200 baud),
++// HLK-LD2410 (24 GHz, 256000 baud) and HLK-LD2450 / Ai-Thinker Rd-03D
++// (24 GHz multi-target trackers, 256000 baud) over a USB-UART adapter. The
++// MR60/LD2410 parsers are byte-for-byte ports of
++// firmware/esp32-csi-node/main/mmwave_sensor.c so the host and the node agree on
++// what a valid frame is. The LD2450 parser is host-only (the firmware does not
++// read it yet) and follows the HLK-LD2450 datasheet report frame.
+ 
+ import { readSerial } from './serial-pump.js';
+ 
+ export const MMWAVE_MODELS = Object.freeze({
+   mr60bha2: Object.freeze({ baud: 115200, band: '60 GHz', vendor: 'Seeed' }),
+   ld2410: Object.freeze({ baud: 256000, band: '24 GHz', vendor: 'HLK' }),
++  ld2450: Object.freeze({ baud: 256000, band: '24 GHz', vendor: 'HLK' }),
++  // Same report frame as the LD2450. Ships in single-target mode; this reader
++  // never sends configuration commands, so it reports what the module emits.
++  rd03d: Object.freeze({ baud: 256000, band: '24 GHz', vendor: 'Ai-Thinker' }),
+ });
+ 
+ const MR60 = Object.freeze({ SOF: 0x01, MAX_PAYLOAD: 30, BREATHING: 0x0a14, HEART: 0x0a15, DISTANCE: 0x0a16, PRESENCE: 0x0f09, PHASE: 0x0a13, POINTCLOUD: 0x0a04 });
+@@ -115,6 +122,61 @@ function decodeLd2410(d) {
+   };
+ }
+ 
++// HLK-LD2450 report frame (datasheet §2.2): AA FF 03 00 | 3 x 8-byte target | 55 CC.
++const LD2450_HEAD = [0xaa, 0xff, 0x03, 0x00];
++const LD2450_TAIL = [0x55, 0xcc];
++const LD2450_TARGETS = 3;
++const LD2450_BODY = LD2450_TARGETS * 8;
++
++/** LD2450 sign-magnitude int16: top bit set = positive, low 15 bits = magnitude. */
++export function ld2450Signed(lo, hi) {
++  const raw = lo | (hi << 8);
++  const mag = raw & 0x7fff;
++  return raw & 0x8000 ? mag : -mag;
++}
++
++/** Streaming HLK-LD2450 / Rd-03D report parser. feed() returns decoded frames. */
++export class Ld2450Parser {
++  constructor() { this.state = 0; this.errors = 0; this.data = []; }
++  feed(bytes) {
++    const frames = [];
++    for (const b of bytes) {
++      if (this.state < 4) {
++        this.state = b === LD2450_HEAD[this.state] ? this.state + 1 : (b === LD2450_HEAD[0] ? 1 : 0);
++        if (this.state === 4) this.data = [];
++      } else if (this.state === 4) {
++        this.data.push(b);
++        if (this.data.length >= LD2450_BODY) this.state = 5;
++      } else {
++        const i = this.state - 5;
++        if (b !== LD2450_TAIL[i]) { this.errors += 1; this.state = b === LD2450_HEAD[0] ? 1 : 0; continue; }
++        if (i === 1) { frames.push(decodeLd2450(this.data)); this.state = 0; } else this.state += 1;
++      }
++    }
++    return frames;
++  }
++}
++
++function decodeLd2450(d) {
++  const targets = [];
++  for (let t = 0; t < LD2450_TARGETS; t += 1) {
++    const o = t * 8;
++    // An empty slot is all zeros; a real target always has y > 0 (in front of the board).
++    if (d.slice(o, o + 8).every((v) => v === 0)) continue;
++    const xMm = ld2450Signed(d[o], d[o + 1]);
++    const yMm = ld2450Signed(d[o + 2], d[o + 3]);
++    const speedCmS = ld2450Signed(d[o + 4], d[o + 5]);
++    const resolutionMm = d[o + 6] | (d[o + 7] << 8);
++    targets.push({
++      slot: t, xMm, yMm, speedCmS, resolutionMm,
++      distanceCm: Number((Math.hypot(xMm, yMm) / 10).toFixed(1)),
++      angleDeg: Number(((Math.atan2(xMm, yMm) * 180) / Math.PI).toFixed(1)),
++    });
++  }
++  const nearest = targets.reduce((a, t) => (a === null || t.distanceCm < a ? t.distanceCm : a), null);
++  return { type: 'targets', present: targets.length > 0, targetCount: targets.length, targets, distanceCm: nearest ?? 0 };
++}
++
+ const mean = (xs) => (xs.length ? Number((xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(2)) : null);
+ 
+ /** Summarize decoded frames from either model. */
+@@ -129,13 +191,23 @@ export function summarizeMmwave(model, frames, errors, bytes, seconds) {
+     presentFraction: presence.length ? Number((presence.filter((f) => f.present).length / presence.length).toFixed(3)) : null,
+     breathingBpmMean: mean(pick('breathingBpm')),
+     heartBpmMean: mean(pick('heartBpm')),
+-    distanceCmMean: mean(pick('distanceCm', (f) => f.type !== 'target' || f.present !== false)),
++    distanceCmMean: mean(pick('distanceCm', (f) => !['target', 'targets'].includes(f.type) || f.present !== false)),
++    ...(frames.some((f) => typeof f.targetCount === 'number') ? {
++      targetCountMean: mean(pick('targetCount')),
++      targetCountMax: Math.max(...pick('targetCount')),
++    } : {}),
+     last: frames.slice(-5),
+   };
+ }
+ 
++function parserFor(model) {
++  if (model === 'ld2410') return new Ld2410Parser();
++  if (model === 'ld2450' || model === 'rd03d') return new Ld2450Parser();
++  return new Mr60Parser();
++}
++
+ export function parseMmwave(model, bytes) {
+-  const parser = model === 'ld2410' ? new Ld2410Parser() : new Mr60Parser();
++  const parser = parserFor(model);
+   const frames = parser.feed(bytes);
+   return { frames, errors: parser.errors };
+ }
+@@ -149,7 +221,8 @@ export function parseMmwave(model, bytes) {
+ export async function readMmwave(args, deps) {
+   const seconds = args.seconds ?? 10;
+   const auto = !args.model || args.model === 'auto';
+-  const models = auto ? ['mr60bha2', 'ld2410'] : [args.model];
++  // rd03d is not probed separately: its frames are identical to the LD2450's.
++  const models = auto ? ['mr60bha2', 'ld2410', 'ld2450'] : [args.model];
+   const probeSeconds = auto ? Math.min(seconds, 2) : seconds;
+   const attempts = [];
+   const capture = async (model, secs) => {
+@@ -159,8 +232,12 @@ export async function readMmwave(args, deps) {
+       return { ok: false, reason: error.reason || 'invalid_arguments', detail: error.message };
+     }
+   };
++  // LD2410 and LD2450 share 256000 baud, so one probe capture serves both.
++  const probes = new Map();
+   for (const model of models) {
+-    const cap = await capture(model, probeSeconds);
++    const baud = MMWAVE_MODELS[model].baud;
++    if (!probes.has(baud)) probes.set(baud, await capture(model, probeSeconds));
++    const cap = probes.get(baud);
+     if (!cap.ok) return { ok: false, reason: cap.reason, detail: cap.detail, remedy: cap.remedy };
+     let { frames, errors } = parseMmwave(model, cap.bytes);
+     attempts.push({ model, bytes: cap.bytes.length, frames: frames.length, errors });
+@@ -197,6 +274,6 @@ export async function readMmwave(args, deps) {
+   }
+   return {
+     ok: false, reason: 'no_valid_frames', attempts,
+-    remedy: 'Check TX/RX wiring (crossed), 5 V power, and model/baud (MR60BHA2 115200, LD2410 256000). A C6+MR60 board streams through ESPHome/firmware instead — use its serial log or the node UDP stream.',
++    remedy: 'Check TX/RX wiring (crossed), 5 V power, and model/baud (MR60BHA2 115200, LD2410/LD2450/Rd-03D 256000). A C6+MR60 board streams through ESPHome/firmware instead — use its serial log or the node UDP stream.',
+   };
+ }
+diff --git a/harness/ruview/src/tools.js b/harness/ruview/src/tools.js
+index e100108..2cde3b5 100644
+--- a/harness/ruview/src/tools.js
++++ b/harness/ruview/src/tools.js
+@@ -532,7 +532,7 @@ export const TOOLS = {
+ 
+   ruview_mmwave_read: {
+     title: 'Read mmWave radar',
+-    description: 'Read a 60 GHz Seeed MR60BHA2 or 24 GHz HLK-LD2410 radar. source=serial (default): raw USB-UART frames with firmware-identical checksum parsing, auto-detected by baud. source=esphome: a radar kit running ESPHome (e.g. the Seeed MR60BHA2 kit) over its native API on a private-network host, read-only. Returns presence, distance and device-reported breathing/heart values. MCP requires device-access.',
++    description: 'Read a 60 GHz Seeed MR60BHA2, a 24 GHz HLK-LD2410, or a 24 GHz HLK-LD2450 / Ai-Thinker Rd-03D multi-target tracker (up to 3 targets with x/y position and speed). source=serial (default): raw USB-UART frames with firmware-identical checksum parsing, auto-detected by baud. source=esphome: a radar kit running ESPHome (e.g. the Seeed MR60BHA2 kit) over its native API on a private-network host, read-only. Returns presence, distance and device-reported breathing/heart values. MCP requires device-access.',
+     inputSchema: {
+       type: 'object',
+       properties: {
+diff --git a/harness/ruview/test/devices.test.mjs b/harness/ruview/test/devices.test.mjs
+index acb4a6c..c728883 100644
+--- a/harness/ruview/test/devices.test.mjs
++++ b/harness/ruview/test/devices.test.mjs
+@@ -131,7 +131,7 @@ test('mmWave read auto-detects MR60BHA2 through the serial pump', async () => {
+   assert.deepEqual([ld.ok, ld.model, ld.frames], [true, 'ld2410', 2]);
+   const noise = await readMmwave({ port: 'COM5', seconds: 2 }, pumpDeps([1, 2, 3, 4, 5]));
+   assert.equal(noise.reason, 'no_valid_frames');
+-  assert.equal(noise.attempts.length, 2, 'both models were probed');
++  assert.deepEqual(noise.attempts.map((a) => a.model), ['mr60bha2', 'ld2410', 'ld2450'], 'every model was probed');
+ });
+ 
+ test('serial pump failures map to actionable reasons', async () => {
+diff --git a/harness/ruview/test/mmwave-ld2450.test.mjs b/harness/ruview/test/mmwave-ld2450.test.mjs
+new file mode 100644
+index 0000000..559292a
+--- /dev/null
++++ b/harness/ruview/test/mmwave-ld2450.test.mjs
+@@ -0,0 +1,103 @@
++// SPDX-License-Identifier: MIT
++// HLK-LD2450 / Ai-Thinker Rd-03D multi-target report parsing.
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { Ld2450Parser, ld2450Signed, parseMmwave, readMmwave } from '../src/devices/mmwave.js';
++
++const HEAD = [0xaa, 0xff, 0x03, 0x00];
++const TAIL = [0x55, 0xcc];
++// Encode the LD2450's sign-magnitude int16 (top bit set = positive).
++const enc = (v) => { const raw = v >= 0 ? 0x8000 | v : -v; return [raw & 0xff, raw >> 8]; };
++const slot = (x, y, speed, res = 360) => [...enc(x), ...enc(y), ...enc(speed), res & 0xff, res >> 8];
++const EMPTY = Array(8).fill(0);
++const frame = (...slots) => [...HEAD, ...[...slots, EMPTY, EMPTY, EMPTY].slice(0, 3).flat(), ...TAIL];
++
++// The datasheet's worked example: target 1 at x=-782 mm, y=1713 mm, -16 cm/s, 320 mm.
++const DATASHEET = [0xaa, 0xff, 0x03, 0x00, 0x0e, 0x03, 0xb1, 0x86, 0x10, 0x00, 0x40, 0x01,
++  ...EMPTY, ...EMPTY, 0x55, 0xcc];
++
++const pumpDeps = (bytes) => ({
++  python: () => '/usr/bin/python3',
++  exec: async () => ({ ok: true, stdout: `HEX ${Buffer.from(bytes).toString('hex')}\nEND ${bytes.length}\n` }),
++});
++
++test('sign-magnitude decoding: top bit set is positive', () => {
++  assert.equal(ld2450Signed(0x0e, 0x03), -782);
++  assert.equal(ld2450Signed(0xb1, 0x86), 1713);
++  assert.equal(ld2450Signed(0x00, 0x80), 0);
++  assert.equal(ld2450Signed(0xff, 0xff), 32767);
++});
++
++test('decodes the datasheet example frame', () => {
++  const p = new Ld2450Parser();
++  const [f, ...rest] = p.feed(Buffer.from(DATASHEET));
++  assert.equal(rest.length, 0);
++  assert.equal(p.errors, 0);
++  assert.equal(f.targetCount, 1);
++  assert.equal(f.present, true);
++  const t = f.targets[0];
++  assert.deepEqual([t.slot, t.xMm, t.yMm, t.speedCmS, t.resolutionMm], [0, -782, 1713, -16, 320]);
++  assert.equal(t.distanceCm, 188.3); // hypot(782, 1713) mm
++  assert.ok(t.angleDeg < 0, 'negative x is to the left of boresight');
++  assert.equal(f.distanceCm, 188.3);
++});
++
++test('three targets, nearest distance, empty slots skipped', () => {
++  const p = new Ld2450Parser();
++  const frames = p.feed(Buffer.from([
++    ...frame(slot(500, 2000, 10), slot(-300, 800, 0), slot(0, 3000, -25)),
++    ...frame(),
++  ]));
++  assert.equal(frames.length, 2);
++  assert.equal(frames[0].targetCount, 3);
++  assert.deepEqual(frames[0].targets.map((t) => t.slot), [0, 1, 2]);
++  assert.equal(frames[0].distanceCm, 85.4); // the (-300, 800) target
++  assert.deepEqual([frames[1].present, frames[1].targetCount, frames[1].distanceCm], [false, 0, 0]);
++});
++
++test('resynchronises after garbage, split reads and a bad tail', () => {
++  const p = new Ld2450Parser();
++  const good = frame(slot(100, 1000, 0));
++  const bad = [...good.slice(0, -2), 0x55, 0x00];
++  const stream = [0x00, 0xaa, 0xaa, 0xff, 0x13, ...bad, 0x12, ...good, ...good];
++  const out = [];
++  for (let i = 0; i < stream.length; i += 7) out.push(...p.feed(Buffer.from(stream.slice(i, i + 7))));
++  assert.equal(out.length, 2);
++  assert.equal(p.errors, 1);
++  assert.equal(out[0].targets[0].yMm, 1000);
++});
++
++test('LD2410 frames are not mistaken for LD2450 frames and vice versa', () => {
++  const ld2410 = [0xf4, 0xf3, 0xf2, 0xf1, 0x0d, 0x00, 0x02, 0xaa, 0x01, 0x78, 0x00, 60, 0x50, 0x00, 40, 0x2c, 0x01, 0x55, 0x00, 0xf8, 0xf7, 0xf6, 0xf5];
++  assert.equal(parseMmwave('ld2450', Buffer.from(ld2410)).frames.length, 0);
++  assert.equal(parseMmwave('ld2410', Buffer.from(DATASHEET)).frames.length, 0);
++});
++
++test('rd03d uses the LD2450 frame', () => {
++  const { frames } = parseMmwave('rd03d', Buffer.from(DATASHEET));
++  assert.equal(frames[0].targets[0].xMm, -782);
++});
++
++test('readMmwave summarises an LD2450 capture with target counts', async () => {
++  const bytes = [...frame(slot(0, 1500, 0)), ...frame(slot(0, 1500, 0), slot(400, 900, 5)), ...frame()];
++  const r = await readMmwave({ port: '/dev/ttyUSB0', model: 'ld2450', seconds: 1 }, pumpDeps(bytes));
++  assert.equal(r.ok, true, JSON.stringify(r));
++  assert.deepEqual([r.model, r.band, r.frames, r.checksumErrors], ['ld2450', '24 GHz', 3, 0]);
++  assert.equal(r.presentFraction, 0.667);
++  assert.equal(r.targetCountMax, 2);
++  assert.equal(r.targetCountMean, 1);
++  assert.equal(r.distanceCmMean, 124.25); // mean of 150 and 98.5; the empty frame is excluded
++});
++
++test('auto detection finds an LD2450 using one shared 256000-baud probe', async () => {
++  const bauds = [];
++  const bytes = [...frame(slot(0, 1200, 0)), ...frame(slot(0, 1210, 0)), ...frame(slot(0, 1220, 0))];
++  const deps = pumpDeps(bytes);
++  const exec = deps.exec;
++  deps.exec = async (cmd, args, opts) => { bauds.push(args.find((a) => /^\d{5,}$/.test(a))); return exec(cmd, args, opts); };
++  const r = await readMmwave({ port: '/dev/ttyUSB0', model: 'auto', seconds: 2 }, deps);
++  assert.equal(r.ok, true, JSON.stringify(r));
++  assert.equal(r.detected, 'ld2450');
++  // 115200 for the MR60 probe, then a single 256000 capture shared by LD2410 and LD2450.
++  assert.equal(bauds.filter((b) => b === '256000').length, 1, JSON.stringify(bauds));
++});
