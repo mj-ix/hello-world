@@ -2,209 +2,178 @@
 
 This folder holds ready-made software ("firmware") for the little ESP32 boards.
 Once a board has it, the board joins your home WiFi and sends WiFi-sensing data
-to your laptop.
+to your MacBook.
 
 **Status: built, but not yet tested on a real board.**
 
 ---
 
-# Step-by-step guide (no experience needed)
+# Step-by-step guide for a MacBook Air (no experience needed)
 
-This guide assumes a **Windows** laptop. Mac notes are at the end of each step.
-Go slowly. Each step only needs to be done once unless it says otherwise.
+Go slowly and do the steps in order. Steps 1–3 are only done once.
 
 **You'll need:**
-- The laptop, plugged in and connected to your home WiFi
+- The MacBook Air, plugged in and connected to your home WiFi
 - One ESP32 board. Start with the **Waveshare ESP32-C6** (the one with the
   1.47" screen): it's the type RuView has confirmed works.
-- A **USB-C cable that carries data**. Some cables only charge; if nothing
-  happens in step 5, try a different cable.
+- A **USB-C to USB-C cable that carries data**. Some cables only charge; if the
+  board isn't found in step 5, try a different cable. (Older MacBook Airs with
+  rectangular USB-A ports need a USB-A to USB-C cable instead.)
 - Your home WiFi name and password
 
-**A few words you'll see:**
-- **Terminal / Command Prompt:** a window where you type commands. You type (or
-  paste) a line, press **Enter**, and wait until it finishes.
-- **Paste into Command Prompt:** right-click inside the window.
-- **Folder path:** where a file lives, like `C:\Users\You\Downloads`.
+**Words you'll see:**
+- **Terminal:** a window where you type commands. You paste a line, press
+  **Return**, and wait until it finishes and you can type again.
+- **Paste:** press **⌘ + V** (Command and V together).
 
 ---
 
-## Step 1: Install three free programs
+## Step 1: Install two free programs
 
-Download and install each one. Accept the default choices unless told otherwise.
-
-1. **Python:** go to <https://www.python.org/downloads/> and click the big yellow
-   **Download Python** button. Open the file you downloaded.
-   **Important:** on the first screen, tick the box **"Add python.exe to PATH"**
-   at the bottom, then click **Install Now**.
+1. **Python:** open Safari and go to <https://www.python.org/downloads/>.
+   Click the yellow **Download Python** button. When it finishes, click the
+   download arrow at the top right of Safari and open the file. Click
+   **Continue** and **Agree** through the screens, then **Install**, and type
+   your Mac password when asked. When a Finder window pops up at the end, you
+   can close it.
 2. **Node.js:** go to <https://nodejs.org/>, click the button marked **LTS**,
-   open the file and click **Next** through to **Finish**.
-3. **Git:** go to <https://git-scm.com/download/win>, click
-   **Click here to download**, open the file and click **Next** through to
-   **Finish**.
+   open the downloaded file, and click **Continue** / **Agree** / **Install**
+   the same way.
 
-*Mac: Python from python.org (no box to tick); Node.js the same; for Git, open
-Terminal, type `git`, press Enter and click **Install** when asked.*
+## Step 2: Download the firmware
 
-## Step 2: Open the Command Prompt
+1. Make sure you're signed in to GitHub in Safari, then open this link:
+   <https://github.com/mj-ix/hello-world/archive/refs/heads/ccr-cbf88bb5-osmutu.zip>
+2. Safari downloads it and unzips it into your **Downloads** folder as a folder
+   called **hello-world-ccr-cbf88bb5-osmutu**. You don't need to open it.
 
-1. Press the **Windows key** (bottom left of the keyboard, the ⊞ logo).
-2. Type `cmd`
-3. Click **Command Prompt**. A black window opens. Keep it open for every step
-   below.
+## Step 3: Open Terminal and install the board tools
 
-*Mac: press ⌘ + Space, type `terminal`, press Enter.*
-
-## Step 3: Install the board tools
-
-Copy this line, paste it into the Command Prompt (right-click), and press Enter:
-
-```
-pip install "esptool>=5.0" esp-idf-nvs-partition-gen pyserial
-```
-
-Text will scroll for a minute. It's done when it says
-**Successfully installed…** and you can type again.
-
-*If it says `'pip' is not recognized`:* Python wasn't added to PATH. Run the
-Python installer again, choose **Modify**, and tick **Add Python to environment
-variables**. Then close the Command Prompt and open a new one.
-
-## Step 4: Download the firmware and RuView
-
-Paste these lines **one at a time**, pressing Enter after each and waiting for it
-to finish:
-
-```
-cd %USERPROFILE%\Documents
-git clone -b ccr-cbf88bb5-osmutu https://github.com/mj-ix/hello-world.git
-git clone https://github.com/ruvnet/RuView.git
-```
-
-A browser window may ask you to sign in to GitHub for the first one; do that.
-You now have two folders in **Documents**: `hello-world` and `RuView`.
-
-*Mac: use `cd ~/Documents` for the first line.*
-
-## Step 5: Plug in the board and find its "port"
-
-1. Plug the ESP32-C6 into the laptop with the USB-C cable.
-2. Paste this and press Enter:
+1. Press **⌘ + Space**, type `terminal`, and press **Return**. A window opens.
+   Keep it open for every step below.
+2. Paste this line and press Return:
 
    ```
-   python -m serial.tools.list_ports
+   python3 --version
    ```
 
-3. It prints something like `COM5`. **Write that down**: it's your board's
-   port. (If several appear, unplug the board, run it again, and see which one
-   disappeared. That's the board.)
+   It should say **Python 3.13** or similar. (If a box pops up asking to
+   install "command line developer tools", click **Cancel**, quit Terminal with
+   **⌘ + Q**, open it again, and retry. The Python installer needs a fresh
+   Terminal window.)
+3. Paste this line and press Return:
 
-*If nothing appears:* try another cable, then try holding the small **BOOT**
-button on the board while plugging it in.
+   ```
+   python3 -m pip install "esptool>=5.0" esp-idf-nvs-partition-gen pyserial
+   ```
 
-*Mac: it looks like `/dev/cu.usbmodem1101`. Use that wherever you see `COM5`.*
+   Text scrolls for a minute. It's done when it says
+   **Successfully installed…**
+
+## Step 4: Go to the firmware folder
+
+**Do this each time you open a new Terminal window.** Paste and press Return:
+
+```
+cd ~/Downloads/hello-world-ccr-cbf88bb5-osmutu/ruview-firmware
+```
+
+Nothing visible happens; that's normal.
+
+## Step 5: Plug in the board and let the Mac find it
+
+1. Plug the ESP32-C6 into the MacBook with the cable.
+2. If the Mac asks **"Allow accessory to connect?"**, click **Allow**.
+3. Paste this and press Return:
+
+   ```
+   PORT=$(ls /dev/cu.usbmodem* | head -1); echo "Board found at: $PORT"
+   ```
+
+   It should say something like **Board found at: /dev/cu.usbmodem1101**.
+
+   *If it says `no matches found` or shows nothing after "found at":* the Mac
+   can't see the board. Try a different cable. If that doesn't help, hold the
+   small **BOOT** button on the board while plugging it in, then run the line
+   again.
+
+**Only plug in one board at a time**, so the Mac finds the right one.
 
 ## Step 6: Put the firmware on the board ("flashing")
 
-1. Go into the firmware folder:
+Paste this whole line and press Return:
 
-   ```
-   cd %USERPROFILE%\Documents\hello-world\ruview-firmware\esp32c6-4mb
-   ```
+```
+cd esp32c6-4mb && python3 -m esptool --chip esp32c6 --port $PORT --baud 460800 write-flash --flash-mode dio --flash-freq 80m --flash-size 4MB 0x0 bootloader.bin 0x8000 partition-table.bin 0xf000 ota_data_initial.bin 0x20000 esp32-csi-node.bin; cd ..
+```
 
-2. Copy the line below, **change `COM5` to your port from step 5**, then press
-   Enter. It's one long line:
-
-   ```
-   python -m esptool --chip esp32c6 --port COM5 --baud 460800 write-flash --flash-mode dio --flash-freq 80m --flash-size 4MB 0x0 bootloader.bin 0x8000 partition-table.bin 0xf000 ota_data_initial.bin 0x20000 esp32-csi-node.bin
-   ```
-
-3. You'll see percentages climbing. It's done when it says **Hash of data
-   verified** and **Hard resetting**.
+You'll see percentages climbing. It's done when it says
+**Hash of data verified** and **Hard resetting**.
 
 *If it says it can't connect:* hold the **BOOT** button, tap **RESET** (or
 unplug and replug), let go of BOOT, and run the line again.
 
-## Step 7: Find your laptop's address on the home network
+## Step 7: Give the board your WiFi details
 
-Paste this and press Enter:
-
-```
-ipconfig
-```
-
-Look under **Wireless LAN adapter Wi-Fi** for **IPv4 Address**, something like
-`192.168.1.20`. **Write it down.**
-
-*Mac: run `ipconfig getifaddr en0` instead.*
-
-## Step 8: Give the board your WiFi details
-
-1. Save your WiFi password in a small file. Paste this, press Enter, and
-   Notepad opens (click **Yes** to create the file):
+1. Paste this and press Return. It finds your Mac's address on your home
+   network:
 
    ```
-   notepad %USERPROFILE%\Documents\wifi.txt
+   IP=$(ipconfig getifaddr en0); echo "This Mac is at: $IP"
    ```
 
-   Type **only** your WiFi password, then **File → Save** and close Notepad.
-
-2. Go to the RuView folder:
-
-   ```
-   cd %USERPROFILE%\Documents\RuView
-   ```
-
-3. Copy this line and change three things: `COM5` → your port,
-   `MyHomeWiFi` → your WiFi name (keep the quote marks), `192.168.1.20` → the
-   address from step 7. Then press Enter:
+   It should say something like **This Mac is at: 192.168.1.20**.
+2. Copy the line below, but **change `MyHomeWiFi` to your WiFi's name** (keep
+   the quote marks). Then press Return:
 
    ```
-   python firmware\esp32-csi-node\provision.py --port COM5 --ssid "MyHomeWiFi" --password-file %USERPROFILE%\Documents\wifi.txt --target-ip 192.168.1.20 --node-id 1 --zone bedroom
+   python3 provision.py --port $PORT --ssid "MyHomeWiFi" --target-ip $IP --node-id 1 --zone bedroom
    ```
 
-   The board restarts and joins your WiFi.
+3. It asks **WiFi password for MyHomeWiFi:**. Type your WiFi password and press
+   Return. **Nothing appears while you type.** That's on purpose, so nobody can
+   see it.
+
+The board restarts and joins your WiFi.
 
 **Good to know:**
 - The boards only use **2.4 GHz** WiFi. If your router has separate 2.4 GHz and
   5 GHz names, use the 2.4 GHz one.
-- If your laptop's address from step 7 ever changes (e.g. after the router
-  restarts), repeat this step with the new address.
+- If your Mac's address ever changes (e.g. after the router restarts), repeat
+  step 7.
 
-*Mac: use `--password-file ~/Documents/wifi.txt` and forward slashes
-(`firmware/esp32-csi-node/provision.py`).*
+## Step 8: Check the board is sending data
 
-## Step 9: Check the board is sending data
-
-Leave the board plugged in (or plug it into any USB phone charger nearby).
-Paste this and press Enter:
+The board can stay plugged into the Mac, or go on any USB phone charger nearby.
+Paste this and press Return:
 
 ```
 npx @ruvnet/ruview esp32 --seconds 10
 ```
 
-- The first time, it asks **Ok to proceed? (y)**. Type `y` and press Enter.
-- If Windows shows a **firewall** pop-up, tick **Private networks** and click
-  **Allow access**.
+- The first time, it asks **Ok to proceed? (y)**. Type `y` and press Return.
+- If the Mac asks whether to **accept incoming network connections** or let
+  Terminal **find devices on your local network**, click **Allow**.
 
-After 10 seconds it prints a summary. If it shows a node with packets, **it
-works!** If it says **no_packets**, check the 2.4 GHz WiFi name and the laptop
-address, then repeat step 8.
+After 10 seconds it prints a summary. If it shows a node with packets,
+**it works!** If it says **no_packets**, check that you used the 2.4 GHz WiFi
+name, then repeat step 7.
 
-**Send a photo or copy of what it printed to Claude**, and we'll go from there.
+**Send a screenshot of what it printed to Claude** (press **⌘ + Shift + 4**
+and drag over the Terminal window), and we'll go from there.
 
-## Step 10: The other boards (later)
+## Step 9: The other boards (later)
 
-Do the same steps 5–9 for each board, with these changes:
+For each board: plug it in alone, then do steps 5–7 again with these changes.
 
-| Board | Folder in step 6 | `--chip` | `--flash-size` |
+| Board | In step 6, change `esp32c6-4mb` to | `--chip` | `--flash-size` |
 |---|---|---|---|
-| Waveshare ESP32-C6-LCD-1.47 | `esp32c6-4mb` | `esp32c6` | `4MB` |
+| Waveshare ESP32-C6-LCD-1.47 | `esp32c6-4mb` (as written) | `esp32c6` | `4MB` |
 | Seeed XIAO ESP32-S3 Sense | `xiao-esp32s3-8mb` | `esp32s3` | `8MB` |
 | Waveshare ESP32-S3-Touch-LCD-1.83 | `xiao-esp32s3-8mb` | `esp32s3` | `8MB` |
 | Waveshare ESP32-S3-Zero | `esp32s3-zero-4mb` | `esp32s3` | `4MB` |
 
-- In step 8, give each board its own number (`--node-id 2`, `--node-id 3`, …)
+- In step 7, give each board its own number (`--node-id 2`, `--node-id 3`, …)
   and a room name (`--zone bathroom`, `--zone kitchen`, …).
 - The screens on the Waveshare boards stay blank; that's expected.
 - **S3-Zero warning:** this tiny board can get hot running this firmware, and
@@ -218,7 +187,7 @@ Do the same steps 5–9 for each board, with these changes:
 Built from [ruvnet/RuView](https://github.com/ruvnet/RuView) `a175477`
 (2026-11-09), `firmware/esp32-csi-node`, with ESP-IDF v5.4
 (`espressif/idf:v5.4` Docker image). Each folder has `SHA256SUMS.txt`
-(`sha256sum -c SHA256SUMS.txt` to verify).
+(`shasum -a 256 -c SHA256SUMS.txt` to verify on a Mac).
 
 | Folder | Boards | Flash | Settings |
 |---|---|---|---|
@@ -233,21 +202,26 @@ Built from [ruvnet/RuView](https://github.com/ruvnet/RuView) `a175477`
 - **Flash layout** (all three): bootloader `0x0`, partition table `0x8000`,
   otadata `0xf000`, app `0x20000`.
 - **S3-Touch-LCD-1.83** has 16 MB flash; the 8 MB image leaves the rest unused.
+- **`provision.py`** is an unmodified copy of RuView's
+  `firmware/esp32-csi-node/provision.py` at `a175477` (MIT, see
+  `LICENSE-RuView`). It writes WiFi and target settings to the board's NVS
+  partition. With no `--password`, it prompts for one without echoing it.
 - **Don't use RuView's `release_bins/` folder.** The project marks those files
   as old snapshots.
 - RuView only counts firmware as working once a board has booted it and
   produced a boot log.
 
 **Optional dashboard.** RuView's sensing server shows a live web dashboard. It
-needs Rust (<https://rustup.rs>) and a full RuView checkout:
+needs Rust (<https://rustup.rs>), Git, and a full RuView checkout:
 
 ```sh
-cd RuView && git submodule update --init --depth 1
+git clone https://github.com/ruvnet/RuView && cd RuView
+git submodule update --init --depth 1
 cd v2 && cargo run --release -p wifi-densepose-sensing-server -- \
   --udp-bind 0.0.0.0 --udp-allow 192.168.1.0/24
 # open http://localhost:8080
 ```
 
-Step 9's check and the server both listen on UDP port 5005, so stop one before
+Step 8's check and the server both listen on UDP port 5005, so stop one before
 starting the other. The server shows simulated data (labelled as simulated)
 until a real board sends a frame.
