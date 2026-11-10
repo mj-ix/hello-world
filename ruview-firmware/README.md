@@ -231,7 +231,7 @@ a room where someone is sleeping.
    PORT=$(ls /dev/cu.usbmodem* | head -1); python3 watch_log.py $PORT 30
    ```
 
-   Look for **Detected LD2410 at 256000 baud**. If it says
+   Look for **mmWave sensor: LD2410** (confirmed on a real board). If it says
    **No mmWave sensor detected**, check the wires (especially that TX and RX
    are crossed) and press RESET again. The board only looks for a radar when it
    starts up.
