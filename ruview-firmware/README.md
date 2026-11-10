@@ -8,6 +8,9 @@ to your MacBook.
 it booted, joined home WiFi, and streamed WiFi-sensing data to the Mac
 (2026-11-10). The S3 builds haven't been tried on a board yet.
 
+**Already flashed a board before Nov 10?** Re-do step 6 with the current files to
+switch off the flashing LED. Your WiFi settings are kept.
+
 **Tip:** if a board won't join the WiFi (the log shows `reason=2` or
 `reason=201`), move it closer to the router. Its small antenna needs a decent
 signal. `python3 watch_log.py $PORT` shows the board's startup log.
@@ -272,14 +275,17 @@ Built from [ruvnet/RuView](https://github.com/ruvnet/RuView) `a175477`
 
 | Folder | Boards | Flash | Settings |
 |---|---|---|---|
-| `esp32c6-4mb/` | Waveshare ESP32-C6-LCD-1.47 | 4 MB | `sdkconfig.defaults` + `sdkconfig.defaults.esp32c6` + `sdkconfig.defaults.devkitc` |
-| `xiao-esp32s3-8mb/` | Seeed XIAO ESP32-S3 Sense, Waveshare ESP32-S3-Touch-LCD-1.83 | 8 MB | `sdkconfig.defaults` + `sdkconfig.defaults.devkitc` |
-| `esp32s3-zero-4mb/` | Waveshare ESP32-S3-Zero | 4 MB | `sdkconfig.defaults` + `sdkconfig.defaults.4mb` |
+| `esp32c6-4mb/` | Waveshare ESP32-C6-LCD-1.47 | 4 MB | `sdkconfig.defaults` + `sdkconfig.defaults.esp32c6` + `sdkconfig.defaults.devkitc` + `sdkconfig.defaults.ledoff` |
+| `xiao-esp32s3-8mb/` | Seeed XIAO ESP32-S3 Sense, Waveshare ESP32-S3-Touch-LCD-1.83 | 8 MB | `sdkconfig.defaults` + `sdkconfig.defaults.devkitc` + `sdkconfig.defaults.ledoff` |
+| `esp32s3-zero-4mb/` | Waveshare ESP32-S3-Zero | 4 MB | `sdkconfig.defaults` + `sdkconfig.defaults.4mb` + `sdkconfig.defaults.ledoff` |
 
 - **Display support is compiled out of all three.** On a board with no screen,
   the default build can falsely detect one and then capture no CSI at all
   (RuView#893). RuView only drives an SH8601 AMOLED panel, so the Waveshare
   boards' ST7789 LCDs aren't supported either way.
+- **The onboard LED is switched off** (`sdkconfig.defaults.ledoff`, included here). RuView's
+  default drives it as a 40 Hz strobe (`CONFIG_LED_GAMMA_VIZ`, ADR-183), which
+  doesn't belong in a bedroom. Builds made before 2026-11-10 02:00 UTC still strobe.
 - **Flash layout** (all three): bootloader `0x0`, partition table `0x8000`,
   otadata `0xf000`, app `0x20000`.
 - **S3-Touch-LCD-1.83** has 16 MB flash; the 8 MB image leaves the rest unused.

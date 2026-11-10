@@ -1,0 +1,2 @@
+# Bedroom-safe: no 40 Hz LED strobe (ADR-183 off). Onboard LED is cleared at boot.
+# CONFIG_LED_GAMMA_VIZ is not set
