@@ -200,48 +200,70 @@ stand still, leave the room, and watch it change. Press **Control + C** to
 stop. These are the board's own experimental estimates, so test them before
 trusting them.
 
-## Watch from your phone
+## Watch from your phone (and get alerts)
 
-`presence_web.py` shows the boards as a page you can open on your phone: a big
-"Someone there / Empty", WiFi activity, the radar, the fall flag (with a red
-banner), and a 30-minute timeline.
+`presence_web.py` shows the boards as a page you can open on your phone, and
+can send alerts to your phone. It listens to the boards directly, so the page
+updates within a second or two.
 
+**The page shows:** a big "Someone there / Empty", what the radar sees and for
+how long, WiFi activity, the fall flag, a 30-minute timeline and recent alerts.
 With a radar fitted, **the radar alone decides "Someone there"**: it only
 watches its own area. WiFi sensing reacts to activity anywhere between the
 board and the router (other rooms, people and pets moving), so it's shown as a
-whole-area **activity level** instead. On real hardware its "moving" flag was on
-almost constantly, because the firmware sets it at a motion level of 0.01
-while normal readings run 2–20.
+whole-area **activity level** instead. (On real hardware the board's own WiFi
+"moving" flag was on almost constantly: the firmware sets it at a motion level
+of 0.01, while normal readings run 2–20.)
 
-1. Download it (once) and start it. `caffeinate -i` keeps the Mac from going to
-   sleep while it runs:
+**Alerts it can send:**
+- **Someone in a watched spot too long**, e.g. the hallway for 2 minutes. Only
+  for boards you list with `--watch`; a bedroom shouldn't be on the list, since
+  lying still there for hours is normal.
+- **The fall flag went up** (marked unconfirmed: it's crude).
+- **A board stopped reporting** for 2 minutes, and when it's back.
+
+### Set up phone alerts (once)
+
+1. On your phone, install the free **ntfy** app from the App Store.
+2. On the Mac, download the program:
 
    ```
    curl -fsSLO https://raw.githubusercontent.com/mj-ix/hello-world/ccr-cbf88bb5-osmutu/ruview-firmware/presence_web.py
    ```
+
+3. Start it. This names board 1 "Hallway" and alerts after 2 minutes:
+
    ```
-   caffeinate -i python3 presence_web.py
+   caffeinate -i python3 presence_web.py --watch "1=Hallway:2" --notify
    ```
 
-2. If the Mac asks whether **Python** may accept incoming connections, click
-   **Allow**.
-3. It prints a link like `http://192.168.1.161:8000/?t=Ab3dEf...`. On your phone
-   (on the same WiFi), type that whole link into Safari. Tip: tap **Share → Add
-   to Home Screen** to open it like an app.
+   `caffeinate -i` keeps the Mac awake. If the Mac asks whether **Python** may
+   accept incoming connections, click **Allow**.
+4. It prints a channel name like `room-sensors-3f9a…`. In the ntfy app, tap
+   **+**, type that exact name, and subscribe. You should get a
+   **"Room Sensors started"** notification. If you don't, alerts aren't
+   reaching you yet.
+5. It also prints a link. Open it in Safari on your phone (same WiFi) and add
+   it to your Home Screen.
+
+The link and the channel are saved, so they **stay the same** every time you
+start it. To get new ones, delete `~/.ruview-room-sensors.json`.
 
 **Good to know:**
-- The part after `?t=` is a secret key. Without it the page shows nothing, so
-  other people on your WiFi can't see it. Don't share the link. A new key is
-  made every time you start it.
+- The link's secret key keeps other people on your WiFi from seeing the page.
+  **Keep the channel name private too**: ntfy channels are public, so anyone
+  who knows the name could read the alerts. The alerts only say things like
+  "Hallway: someone there for 2 min".
+- Alerts go through ntfy's free public server (ntfy.sh) to reach your phone.
+- Several boards: `--watch "1=Hallway:2,2=Bathroom:40"`.
 - Only one program can listen to the boards at a time: stop `presence.py` (and
-  the step 8 check) before starting this, and vice versa.
-- The Mac needs to stay on, plugged in, and on the same WiFi as the boards.
-- **Away from home:** the phone can't reach the Mac over the internet on its
-  own. Don't open ports on your router for this. A safe option is
-  [Tailscale](https://tailscale.com) (free): install it on the Mac and the
-  phone, sign in to both with the same account, then use the Mac's Tailscale
-  address (shown in the Tailscale app, starting with `100.`) in place of
-  `192.168.1.161` in the link.
+  the step 8 check) before starting this.
+- The Mac must stay on, plugged in, and on the same WiFi as the boards. If the
+  program stops, no alerts are sent, so check the page now and then.
+- **Away from home:** the page needs Tailscale (free): install it on the Mac
+  and phone, sign in to both with the same account, and use the Mac's
+  Tailscale address (starts with `100.`) in place of `192.168.1.161`. Alerts
+  reach your phone anywhere without it.
 
 ## Adding the LD2410C radar to the ESP32-C6
 
