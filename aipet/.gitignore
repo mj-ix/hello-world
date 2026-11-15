@@ -1,0 +1,13 @@
+# the pet's home: memory, creations, built site
+pet_home/
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# secrets
+.env
