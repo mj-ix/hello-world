@@ -1,8 +1,59 @@
 # Basement camera you can check from anywhere
 
-Two boards on the table, one basement. This folder has a working setup for each,
-plus the piece that usually gets skipped: reaching the camera securely from
-outside the house.
+Two boards on the table, one basement, and one question to answer from your
+phone: is there water in the cats' bowl? This folder has three working setups.
+Start with the first one; the other two are there if you later want live video.
+
+## Start here: a photo of the water bowl on demand
+
+**Use the XIAO ESP32S3 Sense with the Telegram sketch**
+(`esp32/bowl_cam_telegram/`). You send `/photo` to a Telegram bot you own, the
+board takes a 1600x1200 picture and sends it back, from anywhere, in a few
+seconds. Nothing is opened on your router, no Pi is needed, and the whole thing
+runs from any USB phone charger next to the bowl. A live stream would be
+overkill for this, and it is the live stream that makes remote access hard.
+
+### Set it up (about 20 minutes)
+1. In Telegram, message **@BotFather**, send `/newbot`, follow the prompts, and
+   copy the token it gives you. Only people who know the token can drive the
+   bot, and the sketch additionally answers only your own chat id.
+2. Arduino IDE 2.x. Boards Manager: **esp32 by Espressif Systems**. Library
+   Manager: **ArduinoJson** (Benoit Blanchon, 7.x). Board **XIAO_ESP32S3**,
+   Tools > **PSRAM: "OPI PSRAM"** (mandatory), **USB CDC On Boot: Enabled**.
+3. Screw the antenna onto the board. Basements eat 2.4 GHz signal.
+4. In `esp32/bowl_cam_telegram/`, copy `secrets.h.example` to `secrets.h`, fill
+   in Wi-Fi and the bot token, leave `ALLOWED_CHAT_ID` at 0, upload.
+5. Message your bot anything. It replies with your chat id. Put that number in
+   `secrets.h`, upload again. From now on it ignores everyone but you.
+6. Send `/photo`. `/status` reports Wi-Fi signal and uptime.
+
+Set `AUTO_PHOTO_MINUTES` in the sketch (for example 720) to also get a picture
+twice a day without asking. Commands sent while the board was unplugged are
+discarded on boot, so you never get a pile of stale photos.
+
+### Making the water level actually visible
+This matters more than anything in the code. Water is transparent, and a camera
+looking straight down into a bowl cannot tell full from nearly empty.
+
+- **Angle.** Mount the camera low, about at the height of the bowl rim, 30 to
+  60 cm away, looking slightly down across the bowl. The water line shows up
+  against the far inside wall. Straight-down views hide it.
+- **Bowl.** A light, matte interior (plain white ceramic) shows the wet/dry
+  line best. Mirror-like stainless steel and clear glass are the hardest to
+  read; a clear bowl works only with a dark card behind it.
+- **Reference.** A bowl with a visible ring or step inside gives you a
+  built-in gauge. Otherwise take photos at full, half and empty once; after
+  that you will read it at a glance.
+- **Light.** The board has no flash and the basement will be dark. A plug-in
+  LED nightlight pointed at the bowl is enough and costs almost nothing. The
+  sketch's low-light mode helps but cannot photograph a black room.
+- **Test before mounting.** Fill the bowl to three different levels, take a
+  `/photo` of each, and adjust the angle until the three are obviously
+  different.
+
+---
+
+## If you later want live video
 
 ## Which board to use
 
@@ -15,21 +66,19 @@ outside the house.
 | Extras later | Recording, motion alerts, Home Assistant | Snapshots to microSD |
 | Power / size | 2–5 W, needs a case and a good PSU | 0.5 W, thumb-sized, any USB charger |
 
-**Recommendation: use the Raspberry Pi if you have a Pi board for that camera**
+**For live video, use the Raspberry Pi if you have a Pi board for that camera**
 (Zero 2 W or newer). The deciding factor is remote access. Tailscale on the Pi
 gives you a private, encrypted link from your phone to the camera with no port
 forwarding, no dynamic DNS, no exposed services. The ESP32 cannot run anything
 like that, so a stream that is "live from anywhere" needs another always-on
 device at home or an insecure port-forward.
 
-Use the ESP32 if you do not have a Pi board, or you only need to check the
-basement while on your home Wi-Fi, or you want a second tiny camera later.
-
-Both setups below are complete and tested patterns, pick one and go.
+Use the ESP32 stream sketch if you only need live video while on your home
+Wi-Fi, or as a second tiny camera later.
 
 ---
 
-## Option A: Raspberry Pi (recommended)
+## Option A: Raspberry Pi live stream
 
 ### What you need
 - A Pi with a camera connector: Zero 2 W, 3, 4 or 5. Pi 5 and all Zero models
@@ -104,7 +153,7 @@ paths:
 
 ---
 
-## Option B: XIAO ESP32S3 Sense
+## Option B: XIAO ESP32S3 Sense live stream (home Wi-Fi)
 
 ### Flash it
 1. Arduino IDE 2.x. Boards Manager: install **esp32 by Espressif Systems**
@@ -133,16 +182,15 @@ The sketch serves plain HTTP with basic auth. That is fine on your LAN and
   subnet), you approve the route in the Tailscale admin console, and your phone
   reaches `http://<esp32-ip>/` through the tunnel. Some routers (GL.iNet,
   OpenWrt, UniFi, Synology) can run Tailscale themselves.
-- **Snapshot on demand via a Telegram bot.** The ESP32 polls a bot you own and
-  replies with a JPEG when you send `/photo`. No inbound connection at all, and
-  no helper device, but you get stills rather than a stream. Ask and I will add
-  this to the sketch.
+- **Snapshot on demand via a Telegram bot.** That is the `bowl_cam_telegram`
+  sketch at the top of this file: no inbound connection and no helper device,
+  but stills rather than a stream.
 - **No always-on device and you want live video from anywhere:** that is the
   case for Option A.
 
 ---
 
-## Both options: things that matter more than the board
+## All options: things that matter more than the board
 
 - **Lighting.** A basement at night is black to either camera. Options, cheapest
   first: leave a low-wattage LED bulb on, a smart bulb you switch on from the
