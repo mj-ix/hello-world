@@ -1,0 +1,159 @@
+# Basement camera you can check from anywhere
+
+Two boards on the table, one basement. This folder has a working setup for each,
+plus the piece that usually gets skipped: reaching the camera securely from
+outside the house.
+
+## Which board to use
+
+| | Raspberry Pi + ribbon camera | XIAO ESP32S3 Sense |
+|---|---|---|
+| Video | H.264, 720p–1080p, smooth | MJPEG, 800x600–1280x720, ~10–15 fps |
+| Viewers at once | Many | Realistically one |
+| Remote access | Easy and safe (Tailscale runs on the Pi) | Needs a helper device or a push-to-cloud trick |
+| Low light | NoIR camera + IR light works well | Poor; needs a light left on |
+| Extras later | Recording, motion alerts, Home Assistant | Snapshots to microSD |
+| Power / size | 2–5 W, needs a case and a good PSU | 0.5 W, thumb-sized, any USB charger |
+
+**Recommendation: use the Raspberry Pi if you have a Pi board for that camera**
+(Zero 2 W or newer). The deciding factor is remote access. Tailscale on the Pi
+gives you a private, encrypted link from your phone to the camera with no port
+forwarding, no dynamic DNS, no exposed services. The ESP32 cannot run anything
+like that, so a stream that is "live from anywhere" needs another always-on
+device at home or an insecure port-forward.
+
+Use the ESP32 if you do not have a Pi board, or you only need to check the
+basement while on your home Wi-Fi, or you want a second tiny camera later.
+
+Both setups below are complete and tested patterns, pick one and go.
+
+---
+
+## Option A: Raspberry Pi (recommended)
+
+### What you need
+- A Pi with a camera connector: Zero 2 W, 3, 4 or 5. Pi 5 and all Zero models
+  use the small 22-pin connector, so check the ribbon cable fits your board.
+- Raspberry Pi OS **Bookworm** or **Trixie** (64-bit preferred), flashed with Raspberry Pi
+  Imager. In the Imager's settings, set a hostname, your Wi-Fi, and enable SSH.
+- The camera module, ribbon cable seated at both ends with the contacts facing
+  the right way (blue tab away from the board on most connectors).
+- A Tailscale account (free for personal use) and the Tailscale app on your phone.
+
+### Install
+SSH into the Pi, copy `pi/setup.sh` over (or paste it into a file), then:
+
+```bash
+sudo bash setup.sh
+```
+
+The script:
+1. Checks that the camera is detected (`rpicam-hello --list-cameras`).
+2. Installs Tailscale.
+3. Downloads the latest MediaMTX for your Pi's CPU and installs it as a
+   systemd service that starts on boot.
+4. Writes a MediaMTX config that reads the camera directly at 1280x720, 15 fps,
+   with a random viewer password it prints at the end.
+5. Turns off Wi-Fi power saving so the stream does not stall.
+6. Runs `tailscale up`, which prints a login link. Open it, approve the device.
+
+### Watch it
+- On home Wi-Fi: `http://<pi-ip>:8889/cam` (WebRTC, lowest latency).
+- Away from home, with Tailscale on your phone: `http://basement-cam:8889/cam`
+  or `http://<tailscale-ip>:8889/cam`.
+- If WebRTC will not connect on some network, use the HLS page on port 8888
+  instead: `http://basement-cam:8888/cam`.
+- RTSP for VLC or a NAS: `rtsp://basement-cam:8554/cam`.
+
+Username is `viewer`, password is the one the script printed. It is also saved
+in `/usr/local/etc/mediamtx.yml` on the Pi.
+
+### Tuning
+Edit `/usr/local/etc/mediamtx.yml` on the Pi, then `sudo systemctl restart mediamtx`.
+
+- Upside-down mount: set `rpiCameraVFlip: true` and `rpiCameraHFlip: true`.
+- Sharper picture: `rpiCameraWidth: 1920`, `rpiCameraHeight: 1080`. Keep FPS at
+  15 or lower on a Zero 2 W.
+- Dark basement: `rpiCameraExposure: long` and `rpiCameraGain: 8` help, but a
+  camera cannot see without light. See "Lighting" below.
+- Keep the last two days on the SD card: uncomment the `record:` lines in the
+  config. Playback is at `http://basement-cam:9996/list?path=cam`.
+
+### If the picture freezes after a few minutes
+That is Wi-Fi, not the camera. MediaMTX logs `reader is too slow, discarding
+frames` when the link cannot carry the stream. The config already raises the
+send buffer (`writeQueueSize: 1024`); beyond that, lower `rpiCameraBitrate`
+to `1500000`, drop to 800x600, or move the Pi or router closer.
+
+### If the camera source misbehaves
+MediaMTX's built-in Pi camera reader depends on the system `libcamera` package
+matching the MediaMTX build. After a big `apt upgrade`, run `setup.sh` again to
+get a matching MediaMTX. If it still logs "camera not available", switch the
+path to this fallback, which uses the Pi's own `rpicam-vid` and `ffmpeg`
+(`sudo apt install ffmpeg`):
+
+```yaml
+paths:
+  cam:
+    runOnInit: >
+      bash -c 'rpicam-vid -t 0 -n --width 1280 --height 720 --framerate 15
+      --inline -o - | ffmpeg -hide_banner -loglevel error -f h264 -i -
+      -c copy -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH'
+    runOnInitRestart: true
+```
+
+---
+
+## Option B: XIAO ESP32S3 Sense
+
+### Flash it
+1. Arduino IDE 2.x. Boards Manager: install **esp32 by Espressif Systems**
+   (3.x is fine; if the camera fails to init, 2.0.17 is the known-good fallback).
+2. Board: **XIAO_ESP32S3**. Tools menu: **PSRAM: "OPI PSRAM"** (mandatory, the
+   camera has nowhere to put frames otherwise), **USB CDC On Boot: Enabled**.
+3. Screw the Wi-Fi antenna onto the U.FL connector. Basements eat 2.4 GHz
+   signal, and this board is 2.4 GHz only.
+4. In `esp32/basement_cam/`, copy `secrets.h.example` to `secrets.h` and fill in
+   Wi-Fi name, Wi-Fi password, and a camera username and password.
+5. Open `basement_cam.ino`, upload. Serial Monitor at 115200 prints the address.
+6. Open `http://basement-cam.local/` (or the printed IP). Log in. You get a live
+   MJPEG view, a `/jpg` snapshot link, and a `/status` JSON page with Wi-Fi
+   signal and uptime.
+7. In your router, reserve the ESP32's DHCP lease so the IP never changes.
+
+Settings at the top of the sketch: frame size, JPEG quality, flip, and a
+low-light mode that raises sensor gain (grainier but visible).
+
+### Getting to it from outside the house
+The sketch serves plain HTTP with basic auth. That is fine on your LAN and
+**not** something to forward from the internet. Pick one:
+
+- **Tailscale subnet router (best).** Any always-on Linux box, NAS or Pi at
+  home runs `tailscale up --advertise-routes=192.168.1.0/24` (your LAN's
+  subnet), you approve the route in the Tailscale admin console, and your phone
+  reaches `http://<esp32-ip>/` through the tunnel. Some routers (GL.iNet,
+  OpenWrt, UniFi, Synology) can run Tailscale themselves.
+- **Snapshot on demand via a Telegram bot.** The ESP32 polls a bot you own and
+  replies with a JPEG when you send `/photo`. No inbound connection at all, and
+  no helper device, but you get stills rather than a stream. Ask and I will add
+  this to the sketch.
+- **No always-on device and you want live video from anywhere:** that is the
+  case for Option A.
+
+---
+
+## Both options: things that matter more than the board
+
+- **Lighting.** A basement at night is black to either camera. Options, cheapest
+  first: leave a low-wattage LED bulb on, a smart bulb you switch on from the
+  same phone before you look, a motion-activated LED, or (Pi only) a NoIR
+  camera module plus an 850 nm IR illuminator for true night vision.
+- **Wi-Fi.** Test signal where the camera will live before mounting it. Both
+  boards report signal strength (`/status` on the ESP32, `iw dev wlan0 link` on
+  the Pi). Under about -75 dBm the stream will stutter. Ethernet to the Pi
+  beats everything if there is a drop nearby.
+- **Power.** Use a proper 5 V supply (official Pi PSU for a Pi 4/5). Brownouts
+  corrupt SD cards. A cheap smart plug lets you power-cycle a hung camera
+  remotely.
+- **Humidity.** Basements are damp. A vented case or a small enclosure keeps
+  condensation off the lens and the board.
