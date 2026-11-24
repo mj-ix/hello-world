@@ -172,17 +172,42 @@ static bool startCamera() {
   return true;
 }
 
-// Grab a frame at the requested size, switching the sensor if needed and letting exposure settle.
+// Read the real picture size out of a JPEG's header (its SOF marker). The driver reports
+// fb->width from the sensor *setting*, which can be ahead of the data for a frame or two
+// after a size change; decoding such a frame into a smaller buffer would overrun it.
+static bool jpegDims(const uint8_t* b, size_t n, int* w, int* h) {
+  if (n < 4 || b[0] != 0xFF || b[1] != 0xD8) return false;
+  size_t i = 2;
+  while (i + 9 < n) {
+    if (b[i] != 0xFF) { i++; continue; }
+    uint8_t m = b[i + 1];
+    if (m == 0xFF) { i++; continue; }                                         // fill byte
+    if (m == 0x01 || (m >= 0xD0 && m <= 0xD8)) { i += 2; continue; }         // markers without a length
+    size_t len = ((size_t)b[i + 2] << 8) | b[i + 3];
+    if (m == 0xC0 || m == 0xC1 || m == 0xC2) {                               // start of frame
+      *h = (b[i + 5] << 8) | b[i + 6];
+      *w = (b[i + 7] << 8) | b[i + 8];
+      return *w > 0 && *h > 0;
+    }
+    if (m == 0xDA) return false;                                              // scan data reached, no SOF
+    i += 2 + len;
+  }
+  return false;
+}
+
+// Grab a frame whose JPEG data really is `size`, switching the sensor if needed and letting exposure settle.
 static camera_fb_t* grabFrame(framesize_t size) {
   sensor_t* s = esp_camera_sensor_get();
   int settle = 2;
   if (size != currentSize) { s->set_framesize(s, size); currentSize = size; settle = 4; }
   for (int i = 0; i < settle; i++) { camera_fb_t* f = esp_camera_fb_get(); if (f) esp_camera_fb_return(f); }
-  for (int tries = 0; tries < 8; tries++) {
+  for (int tries = 0; tries < 10; tries++) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) return NULL;
-    if (fb->width == resolution[size].width) return fb;
-    esp_camera_fb_return(fb);                          // an old-size frame still in the queue
+    int w = 0, h = 0;
+    if (fb->format == PIXFORMAT_JPEG && jpegDims(fb->buf, fb->len, &w, &h) &&
+        w == resolution[size].width && h == resolution[size].height) return fb;
+    esp_camera_fb_return(fb);                          // an old-size or broken frame, try the next
   }
   return NULL;
 }
@@ -193,8 +218,8 @@ static camera_fb_t* grabFrame(framesize_t size) {
 static uint8_t* grabRGB(framesize_t size, int* W, int* H) {
   camera_fb_t* fb = grabFrame(size);
   if (!fb) return NULL;
-  *W = fb->width; *H = fb->height;
-  size_t n = (size_t)fb->width * fb->height * 3;
+  jpegDims(fb->buf, fb->len, W, H);                    // verified by grabFrame; sizes the buffer from the data
+  size_t n = (size_t)(*W) * (*H) * 3;
   uint8_t* rgb = (uint8_t*)bigAlloc(n);
   bool ok = rgb && fmt2rgb888(fb->buf, fb->len, fb->format, rgb);
   esp_camera_fb_return(fb);
