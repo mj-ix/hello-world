@@ -25,6 +25,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <time.h>
 #include "esp_camera.h"
 #include "img_converters.h"
 #include "secrets.h"
@@ -556,6 +557,18 @@ static void connectWiFi() {
   Serial.printf("\nConnected. IP %s  signal %d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
 }
 
+// Set the clock from NTP. The Arduino build of mbedTLS does not check certificate dates, so TLS
+// works without this; it is kept because it is cheap, makes log times meaningful, and protects
+// against a core build that does enable date checks. If NTP is unreachable we simply carry on.
+static void syncClock() {
+  configTime(0, 0, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+  Serial.print("Setting the clock");
+  uint32_t t0 = millis();
+  while (time(nullptr) < 1700000000 && millis() - t0 < 15000) { delay(250); Serial.print('.'); }
+  if (time(nullptr) < 1700000000) Serial.println("\nNo answer from NTP, carrying on without the time.");
+  else Serial.println(" done");
+}
+
 static void ensureWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
   Serial.println("Wi-Fi lost, reconnecting");
@@ -582,6 +595,7 @@ void setup() {
   haveLow  = loadFeat("l", featLow);
 
   connectWiFi();
+  syncClock();                         // optional, see the comment on syncClock()
   if (VERIFY_TLS) tls.setCACert(TELEGRAM_ROOT_CA); else tls.setInsecure();
   tls.setHandshakeTimeout(15);
 

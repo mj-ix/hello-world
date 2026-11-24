@@ -14,6 +14,9 @@ runs from any USB phone charger next to the bowl. A live stream would be
 overkill for this, and it is the live stream that makes remote access hard.
 
 ### Set it up (about 20 minutes)
+The short version is below. The long version, with every click, button and
+error message, is in `esp32/bowl_cam_telegram/SETUP.md`.
+
 1. In Telegram, message **@BotFather**, send `/newbot`, follow the prompts, and
    copy the token it gives you. Only people who know the token can drive the
    bot, and the sketch additionally answers only your own chat id.
