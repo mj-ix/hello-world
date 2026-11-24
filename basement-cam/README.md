@@ -25,15 +25,71 @@ overkill for this, and it is the live stream that makes remote access hard.
    in Wi-Fi and the bot token, leave `ALLOWED_CHAT_ID` at 0, upload.
 5. Message your bot anything. It replies with your chat id. Put that number in
    `secrets.h`, upload again. From now on it ignores everyone but you.
-6. Send `/photo`. `/status` reports Wi-Fi signal and uptime.
+6. Send `/photo`. `/status` reports Wi-Fi signal, uptime and the last level check.
 
 Set `AUTO_PHOTO_MINUTES` in the sketch (for example 720) to also get a picture
 twice a day without asking. Commands sent while the board was unplugged are
 discarded on boot, so you never get a pile of stale photos.
 
+### Low-water alert
+The same sketch watches the bowl and messages you, with a photo, when the
+water drops below your line, then again when it is back. It checks every two
+minutes and needs three low readings in a row before it alerts, so a cat's
+head in the way does not trigger it. While the bowl stays low it reminds you
+every eight hours. Two ways to sense the level; pick one with `LEVEL_SOURCE`
+at the top of the sketch.
+
+**With the camera, no extra parts (`LEVEL_CAMERA`, the default).** It watches
+a small box in the middle of the picture. Line the box up with your bowl's
+level window at the point you call "low", then teach it what the box looks
+like with water and without:
+
+1. Send `/aim`. You get a picture with the box drawn on it. Move the camera
+   until the window's low line runs through the box, and the box shows only
+   window (not the bowl's edge or the floor). Repeat until it looks right.
+2. With water above the line, send `/calibrate full`.
+3. With water below the line (scoop some out, or wait), send `/calibrate low`.
+   It tells you how different the two looks are; if it says "not much", change
+   the light or the angle and do both steps again.
+4. Refill. `/level` shows what it thinks right now and the numbers behind it.
+
+It compares the box to the rest of the frame, so a brighter or dimmer room
+does not fool it, but it needs *some* light: it refuses to judge in the dark
+rather than guess. The nightlight from the next section covers that. Clear
+water against a plain window can be a subtle change; a coloured or frosted
+window, or a dark card behind a clear one, makes it much more reliable.
+
+**With a liquid sensor, about $5 (`LEVEL_SENSOR_PIN`).** An XKC-Y25-NPN
+non-contact liquid level sensor is a flat puck you tape to the *outside* of
+the bowl at your line. It senses water through up to about 2 cm of plastic,
+ceramic or glass (not metal), does not care about light or cats, and needs no
+calibration. Wiring to the XIAO: brown to the 5V pin, blue to GND, yellow to
+D1. If yours has a fourth (black) wire, leave it unconnected. Get the NPN
+version specifically; the "-V" version outputs 5 V on its signal wire, which
+the ESP32's pins cannot take. Set `LEVEL_SOURCE` to `LEVEL_SENSOR_PIN`,
+upload, and check `/level` with water above and below the line; if it reads
+backwards, flip `SENSOR_WET_LEVEL`. The small screw on the sensor's back sets
+sensitivity if it is sluggish through a thick wall.
+
+If you want this to just work, buy the sensor. If you want to try with what
+is on the table today, start with the camera; the sensor is a one-line change
+later and the photos keep working either way.
+
+### About the Adafruit CLUE
+The CLUE has no camera. The sensor on its front is an APDS9960 light, colour,
+gesture and proximity sensor, next to two white LEDs. Its proximity sensing
+bounces infrared off nearby objects a few centimetres away, and water hardly
+reflects infrared, so pointed at a bowl it reads almost nothing. It also has
+Bluetooth only, no Wi-Fi, so it could not send you an alert without a phone
+sitting beside it. Keep it for another project; its other sensors are
+pressure, temperature, humidity, motion, compass and a microphone.
+
 ### Making the water level actually visible
-This matters more than anything in the code. Water is transparent, and a camera
-looking straight down into a bowl cannot tell full from nearly empty.
+This matters more than anything in the code, for the photos and for the
+watcher. Water is transparent, and a camera looking straight down into a bowl
+cannot tell full from nearly empty. Your bowl's side window solves most of
+this: point the camera square at the window, close enough that the window
+fills a good part of the frame.
 
 - **Angle.** Mount the camera low, about at the height of the bowl rim, 30 to
   60 cm away, looking slightly down across the bowl. The water line shows up
